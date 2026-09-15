@@ -320,6 +320,23 @@ def normalize_couleur(label) -> str:
     return str(label).strip().capitalize()
 
 
+def couleurs_arret(value) -> list[str]:
+    """Lit les sélections multiples et les anciennes cellules à couleur unique."""
+    if isinstance(value, (list, tuple)):
+        values = value
+    elif value is None or pd.isna(value):
+        values = []
+    else:
+        values = _re_stock.split(r"[,;/|]+", str(value))
+    selected = {normalize_couleur(v) for v in values}
+    return [c for c in COULEURS_PRODUITS if c in selected]
+
+
+def couleurs_arret_texte(value) -> str:
+    """Format commun au stockage, aux imports et aux feuilles de route."""
+    return ", ".join(couleurs_arret(value))
+
+
 def _stock_default_df() -> pd.DataFrame:
     """Parc initial issu du relevé transmis par l'exploitation.
 
@@ -613,7 +630,7 @@ def besoins_tournee(df_stops: pd.DataFrame, inclure_manutentions: bool = False) 
             qty = max(1, int(float(row.get("Quantité", 1) or 1)))
         except (ValueError, TypeError):
             qty = 1
-        couleur = normalize_couleur(row.get("Couleur", ""))
+        couleur = couleurs_arret_texte(row.get("Couleur", ""))
         key = (art, couleur)
         cur = agg.setdefault(key, {"Sorties": 0, "Retours": 0})
         if sens < 0:
@@ -657,7 +674,7 @@ def controle_disponibilite(df_stock: pd.DataFrame, df_besoins: pd.DataFrame) -> 
         art, coul = b["Article"], b["Couleur"]
         if coul:
             dispo = int(stock[(stock["Article"] == art) &
-                              (stock["Couleur"] == coul)]["En stock"].sum())
+                              (stock["Couleur"].isin(couleurs_arret(coul)))]["En stock"].sum())
             libelle_coul = coul
         else:
             dispo = int(stock[stock["Article"] == art]["En stock"].sum())
@@ -693,12 +710,15 @@ def projeter_stock(df_stock: pd.DataFrame, df_besoins: pd.DataFrame) -> pd.DataF
         for qte, sens in ((int(b["Sorties"]), -1), (int(b["Retours"]), +1)):
             if qte <= 0:
                 continue
-            if coul:
+            selection = couleurs_arret(coul)
+            if len(selection) == 1:
                 cibles = [(coul, qte)]
             else:
                 # Allocation gloutonne : on sert d'abord la couleur la mieux dotée
-                sub = stock[stock["Article"] == art].sort_values(
-                    "En stock", ascending=(sens > 0))
+                sub = stock[stock["Article"] == art]
+                if selection:
+                    sub = sub[sub["Couleur"].isin(selection)]
+                sub = sub.sort_values("En stock", ascending=(sens > 0))
                 cibles, reste = [], qte
                 for _, l in sub.iterrows():
                     if reste <= 0:
@@ -709,7 +729,8 @@ def projeter_stock(df_stock: pd.DataFrame, df_besoins: pd.DataFrame) -> pd.DataF
                         cibles.append((l["Couleur"], part))
                         reste -= part
                 if reste > 0:
-                    cibles.append((sub.iloc[0]["Couleur"] if len(sub) else "", reste))
+                    cibles.append((sub.iloc[0]["Couleur"] if len(sub)
+                                   else (selection[0] if selection else ""), reste))
             for c, part in cibles:
                 i = _idx(art, c)
                 if i is None:
@@ -734,7 +755,7 @@ def _besoins_records_pour_export(df_stops, df_stock, inclure_manutentions=False)
         art, coul = b["Article"], b["Couleur"]
         if coul:
             dispo = int(stock[(stock["Article"] == art) &
-                              (stock["Couleur"] == coul)]["En stock"].sum())
+                              (stock["Couleur"].isin(couleurs_arret(coul)))]["En stock"].sum())
             lbl_dispo = f"{dispo} ({coul})"
         else:
             dispo = int(stock[stock["Article"] == art]["En stock"].sum())
@@ -753,6 +774,9 @@ def _besoins_records_pour_export(df_stops, df_stock, inclure_manutentions=False)
 
 def _pastille_couleur(couleur, texte=None, taille="0.78em") -> str:
     """Retourne le HTML d'une pastille colorée (badge) pour une couleur produit."""
+    selection = couleurs_arret(couleur)
+    if texte is None and len(selection) > 1:
+        return " ".join(_pastille_couleur(c, taille=taille) for c in selection)
     coul = str(couleur or "").strip()
     bg   = COULEUR_HEX.get(coul, "#E0E0E0")
     fg   = COULEUR_TEXTE.get(coul, "#FFFFFF")
@@ -952,6 +976,7 @@ def export_stops_excel(df_stops: pd.DataFrame | None = None,
         for c in STOPS_COLUMNS:
             if c not in src.columns:
                 src[c] = "" if c not in ("Quantité", "Durée (min)") else (1 if c == "Quantité" else 30)
+        src["Couleur"] = src["Couleur"].map(couleurs_arret_texte)
         for _, row in src.iterrows():
             ws.append([row.get(c, "") if not pd.isna(row.get(c, "")) else ""
                        for c in STOPS_COLUMNS])
@@ -1025,7 +1050,8 @@ def export_stops_excel(df_stops: pd.DataFrame | None = None,
          "Lave-main ou Urinoir. Ne s'applique qu'au WC chimique : la valeur est "
          "automatiquement vidée pour les autres produits."),
         ("Couleur", "Facultatif",
-         "À renseigner uniquement si le client exige une couleur précise. "
+         "Une ou plusieurs couleurs acceptées, séparées par une virgule "
+         "(ex. Vert, Bleu). La quantité reste le total de la ligne. "
          "Laissée vide, la disponibilité est contrôlée toutes couleurs confondues."),
         ("Quantité", "Entier 1 à 20", "Nombre d'unités concernées. Par défaut : 1."),
         ("Nom du client", "Facultatif", "Nom du client ou du site d'intervention."),
@@ -1207,9 +1233,7 @@ def parse_stops_excel(uploaded_file):
         if not ok_o and str(option_brut).strip():
             opt_inconnues.add(str(option_brut).strip())
 
-        couleur = normalize_couleur(_cell(row, "Couleur", ""))
-        if couleur and couleur not in COULEURS_PRODUITS:
-            couleur = ""
+        couleur = couleurs_arret_texte(_cell(row, "Couleur", ""))
 
         pav_brut, pap_brut = _cell(row, "Pas avant", ""), _cell(row, "Pas après", "")
         pav, pap = _hhmm_from_cell(pav_brut), _hhmm_from_cell(pap_brut)
@@ -3538,9 +3562,10 @@ with tab_saisie:
         # Éditions de cellules
         for row_idx, cols in (state.get("edited_rows") or {}).items():
             for col, val in cols.items():
-                df.at[int(row_idx), col] = val
+                df.at[int(row_idx), col] = couleurs_arret_texte(val) if col == "Couleur" else val
         # Lignes ajoutées via le "+" natif du data_editor
         for row in (state.get("added_rows") or []):
+            row = {**row, "Couleur": couleurs_arret_texte(row.get("Couleur"))}
             df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
         # Lignes supprimées via la corbeille native
         deleted = sorted(state.get("deleted_rows") or [], reverse=True)
@@ -3559,8 +3584,9 @@ with tab_saisie:
         state = st.session_state[key]
         for row_idx, cols in (state.get("edited_rows") or {}).items():
             for col, val in cols.items():
-                df.at[int(row_idx), col] = val
+                df.at[int(row_idx), col] = couleurs_arret_texte(val) if col == "Couleur" else val
         for row in (state.get("added_rows") or []):
+            row = {**row, "Couleur": couleurs_arret_texte(row.get("Couleur"))}
             df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
         deleted = sorted(state.get("deleted_rows") or [], reverse=True)
         for idx in deleted:
@@ -3713,10 +3739,13 @@ with tab_saisie:
         if "Couleur" not in st.session_state.df_stops.columns:
             st.session_state.df_stops["Couleur"] = ""
         st.session_state.df_stops["Couleur"] = (
-            st.session_state.df_stops["Couleur"].fillna("").astype(str))
+            st.session_state.df_stops["Couleur"].map(couleurs_arret_texte))
+
+        editor_df = st.session_state.df_stops.copy()
+        editor_df["Couleur"] = editor_df["Couleur"].map(couleurs_arret).astype(object)
 
         st.data_editor(
-            st.session_state.df_stops,
+            editor_df,
             use_container_width=True,
             num_rows="dynamic",
             column_order=["Suppr", "Action", "Produit", "Option", "Couleur",
@@ -3738,12 +3767,13 @@ with tab_saisie:
                     options=["", "Lave-main", "Urinoir"],
                     help="Réservée au WC chimique. Pour un Urinoir, un Lave-main ou "
                          "un WC handicapé, l'option est automatiquement vidée."),
-                "Couleur": st.column_config.SelectboxColumn(
-                    "🎨 Couleur", width="small",
-                    options=[""] + COULEURS_PRODUITS,
-                    help="Critère facultatif : à renseigner uniquement si le client "
-                         "exige une couleur précise. Laissée vide, la disponibilité "
-                         "est contrôlée toutes couleurs confondues."),
+                "Couleur": st.column_config.MultiselectColumn(
+                    "🎨 Couleurs", width="medium",
+                    options=COULEURS_PRODUITS, default=[],
+                    help="Sélectionnez une ou plusieurs couleurs acceptées. "
+                         "La quantité reste le total de la ligne ; le stock est "
+                         "contrôlé parmi les couleurs choisies. Sans sélection : "
+                         "toutes couleurs confondues."),
                 "Quantité": st.column_config.NumberColumn(
                     "Qté", required=True, width="small",
                     min_value=1, max_value=20, step=1, default=1,
@@ -4162,7 +4192,7 @@ with tab_saisie:
                 "quantity":     _qty_label(row),
                 "produit":      row.get("Produit", ""),
                 "option":       row.get("Option",  ""),
-                "couleur":      normalize_couleur(row.get("Couleur", "")),
+                "couleur":      couleurs_arret_texte(row.get("Couleur", "")),
                 "article":      _article_key(row.get("Produit", ""), row.get("Option", "")),
                 "qty_num":      int(row.get("Quantité", 1) or 1),
                 "client":       row["Nom du client"],
@@ -4879,8 +4909,9 @@ with tab_stock:
             "• *Chargement* / *Déchargement* : neutres par défaut, configurables "
             "via l'interrupteur ci-dessus\n\n"
             "**Gestion de la couleur**  \n"
-            "La couleur est un critère facultatif. Renseignée, la disponibilité est "
-            "contrôlée sur cette couleur précise. Laissée vide, elle est contrôlée "
+            "Les couleurs sont facultatives. Plusieurs choix sont possibles sur "
+            "une même ligne : la disponibilité est contrôlée sur leur stock cumulé, "
+            "sans multiplier la quantité demandée. Sans sélection, elle est contrôlée "
             "toutes couleurs confondues pour l'article concerné.\n\n"
             "**Persistance**  \n"
             "Streamlit ne conserve aucune donnée entre deux sessions. Le cycle de "
