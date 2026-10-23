@@ -2146,7 +2146,7 @@ def _recalc_manual_route(result, new_order):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_map(depot_coords, stops_ordered, geometry, depot_depart_addr="Dépôt départ", depot_retour_addr=None, depot_retour_coords=None):
-    m = folium.Map(location=depot_coords, zoom_start=11, tiles="CartoDB positron")
+    m = folium.Map(location=depot_coords, zoom_start=11, tiles="OpenStreetMap")
     if geometry:
         folium.PolyLine(geometry, color="#1f4e79", weight=4, opacity=0.85).add_to(m)
     folium.Marker(depot_coords,
