@@ -170,6 +170,33 @@ def _auto_duree(action: str, produit: str, quantite) -> int | None:
     return base * qty
 
 
+# Colonnes du tableau de saisie dont la modification recalcule la durée
+DUREE_TRIGGER_COLS = ("Action", "Produit", "Quantité")
+
+
+def apply_auto_duree(df, idx) -> bool:
+    """Applique la durée au barème à la ligne idx de df (si le produit en relève).
+
+    Les produits hors barème (WC Luxe, WC client…) conservent leur durée saisie.
+    Retourne True si la durée a été mise à jour.
+    """
+    duree = _auto_duree(df.at[idx, "Action"], df.at[idx, "Produit"],
+                        df.at[idx, "Quantité"])
+    if duree is None:
+        return False
+    df.at[idx, "Durée (min)"] = duree
+    return True
+
+
+def apply_auto_durees_df(df):
+    """Applique le barème à toutes les lignes d'un tableau de saisie."""
+    if df is None or len(df) == 0 or "Durée (min)" not in df.columns:
+        return df
+    for idx in df.index:
+        apply_auto_duree(df, idx)
+    return df
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # GESTION DU PARC : COULEURS, ARTICLES, STOCKS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1056,8 +1083,9 @@ def export_stops_excel(df_stops: pd.DataFrame | None = None,
         ("Quantité", "Entier 1 à 20", "Nombre d'unités concernées. Par défaut : 1."),
         ("Nom du client", "Facultatif", "Nom du client ou du site d'intervention."),
         ("Durée (min)", "Entier 1 à 480",
-         "Durée d'intervention sur place. Par défaut : 30. Le bouton « Précalculer "
-         "les durées » de l'application recalcule cette colonne au barème."),
+         "Durée d'intervention sur place. Recalculée automatiquement au barème "
+         "à l'import pour les WC chimiques, WC handicapés, Urinoirs et "
+         "Lave-mains ; conservée telle quelle pour les autres produits."),
         ("Pas avant", "Format HH:MM",
          "Heure d'arrivée au plus tôt. Ex : 09:00. Laisser vide si aucune contrainte."),
         ("Pas après", "Format HH:MM",
@@ -1446,7 +1474,7 @@ def _init_df():
         "Quantité":      [1,             1,             1],
         "Nom du client": ["",            "",            ""],
         "Adresse":       ["",            "",            ""],
-        "Durée (min)":   [30,            30,            30],
+        "Durée (min)":   [_auto_duree("Nettoyer", "WC chimique", 1)] * 3,
         "Pas avant":     ["",            "",            ""],
         "Pas après":     ["",            "",            ""],
         "Observations":  ["",            "",            ""],
@@ -4089,6 +4117,7 @@ with tab_saisie:
         if st.session_state.stops_last_file_id != _file_id_stops:
             _df_imp, _msg_imp, _warn_imp = parse_stops_excel(up_stops)
             if _df_imp is not None:
+                _df_imp = apply_auto_durees_df(_df_imp.reset_index(drop=True))
                 if _mode_import.startswith("Ajouter"):
                     _base = st.session_state.df_stops.copy()
                     # On écarte les lignes vides du tableau d'accueil
@@ -4262,7 +4291,10 @@ with tab_saisie:
                 "Durée (min)": st.column_config.NumberColumn(
                     "⏱ Durée (min)", width="small", min_value=1, max_value=480,
                     step=5, default=30,
-                    help="Durée de l'intervention sur place en minutes (ex: 30)"),
+                    help="Calculée automatiquement au barème (× quantité) dès que "
+                         "l'action, le produit ou la quantité change. Reste "
+                         "modifiable à la main ; pour un WC Luxe ou un WC client "
+                         "(hors barème), saisissez-la."),
                 "Pas avant": st.column_config.TextColumn(
                     "⏰ Pas avant", width="small",
                     help="Arriver au plus tôt à cette heure (format HH:MM). Ex : 09:00"),
@@ -4278,27 +4310,39 @@ with tab_saisie:
         )
         # df_stops n'est réécrit que par _flush_editor() lors d'une action.
 
-        # ── Remplissage automatique à la sélection d'un client ────────────────
-        # Exception à la règle ci-dessus : choisir un client dans la colonne
-        # « Client » applique immédiatement les éditions puis complète la ligne.
+        # ── Remplissage automatique (client) et calcul des durées ─────────────
+        # Exception à la règle ci-dessus : choisir un client, ou modifier
+        # l'Action, le Produit ou la Quantité d'une ligne, applique
+        # immédiatement les éditions puis complète la ligne (fiche client et
+        # durée au barème). Une durée saisie à la main est conservée tant que
+        # l'action, le produit et la quantité de la ligne ne changent pas.
         _es = st.session_state.get("editor_stops") or {}
-        _cl_edits = {int(i): c.get("Client")
-                     for i, c in (_es.get("edited_rows") or {}).items()
-                     if "Client" in c}
-        _cl_adds = [(j, r.get("Client"))
-                    for j, r in enumerate(_es.get("added_rows") or [])
-                    if r.get("Client")]
-        if _cl_edits or _cl_adds:
-            _n_base  = len(st.session_state.df_stops)
+        _n_base   = len(st.session_state.df_stops)
+        _triggers = []   # (index d'origine, libellé client | None, recalcul durée)
+        for _i, _c in (_es.get("edited_rows") or {}).items():
+            _cl  = "Client" in _c
+            _dur = any(k in _c for k in DUREE_TRIGGER_COLS)
+            if _cl or _dur:
+                _triggers.append((int(_i), _c.get("Client") if _cl else None, _dur))
+        for _j, _r in enumerate(_es.get("added_rows") or []):
+            _cl  = bool(_r.get("Client"))
+            _dur = any(_r.get(k) not in (None, "") for k in DUREE_TRIGGER_COLS)
+            if _cl or _dur:
+                _triggers.append((_n_base + _j, _r.get("Client") if _cl else None, _dur))
+        if _triggers:
             _deleted = sorted(int(d) for d in (_es.get("deleted_rows") or []))
             _flush_editor()
             _df_fill = st.session_state.df_stops
-            _targets = [(i, lab) for i, lab in _cl_edits.items() if i not in _deleted]
-            _targets += [(_n_base + j, lab) for j, lab in _cl_adds]
-            for _i, _lab in _targets:
+            for _i, _lab, _dur in _triggers:
+                if _i in _deleted:
+                    continue
                 _i_new = _i - sum(1 for d in _deleted if d < _i)
-                if _lab and 0 <= _i_new < len(_df_fill):
+                if not (0 <= _i_new < len(_df_fill)):
+                    continue
+                if _lab:
                     autofill_from_client(_df_fill, _i_new, _lab, _cp_index)
+                elif _dur:
+                    apply_auto_duree(_df_fill, _i_new)
             _df_fill["Client"] = _df_fill["Client"].fillna("").astype(str)
             st.session_state.df_stops = _df_fill
             del st.session_state["editor_stops"]
@@ -4327,6 +4371,24 @@ with tab_saisie:
                 "Pour un **Urinoir**, un **Lave-main** ou un **WC handicapé**, "
                 "l'option est automatiquement vidée."
             )
+
+        # Barème appliqué automatiquement (généré depuis les constantes)
+        with st.expander("⏱️ Durées calculées automatiquement — barème appliqué"):
+            _bar = pd.DataFrame({
+                "Action": ACTIONS_CATALOGUE,
+                "WC chimique": [WC_DUREES_PAR_ACTION.get(a) for a in ACTIONS_CATALOGUE],
+                "WC handicapé": [WC_HANDICAPE_DUREES_PAR_ACTION.get(a)
+                                 for a in ACTIONS_CATALOGUE],
+                "Urinoir / Lave-main": [PRODUIT_SIMPLE_DUREE_DEPOSE if a == "Déposer"
+                                        else PRODUIT_SIMPLE_DUREE_STD
+                                        for a in ACTIONS_CATALOGUE],
+            })
+            st.dataframe(_bar, hide_index=True, use_container_width=True)
+            st.caption("Minutes par unité, multipliées par la quantité. La durée est "
+                       "recalculée dès que l'action, le produit ou la quantité d'une "
+                       "ligne change, à l'import Excel et à la sélection d'un client. "
+                       "Elle reste modifiable à la main. **WC Luxe** et **WC client** "
+                       "sont hors barème : saisissez leur durée.")
 
         # ── Contrôle temps réel de la disponibilité en stock ──────────────────
         _besoins_live = besoins_tournee(
@@ -4386,7 +4448,8 @@ with tab_saisie:
                 "Action": ["Nettoyer"], "Produit": ["WC chimique"],
                 "Option": ["Lave-main"], "Couleur": [""], "Quantité": [1],
                 "Nom du client": [""], "Adresse": [""],
-                "Durée (min)": [30], "Pas avant": [""], "Pas après": [""],
+                "Durée (min)": [_auto_duree("Nettoyer", "WC chimique", 1)],
+                "Pas avant": [""], "Pas après": [""],
                 "Observations": [""],
             })
             st.session_state.df_stops = pd.concat(
@@ -4479,83 +4542,10 @@ with tab_saisie:
                           "session uniquement)."))
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOC 3 — PRÉCALCUL DES DURÉES
+    # BLOC 3 — OPTIMISATION DE LA TOURNÉE
     # ══════════════════════════════════════════════════════════════════════════
     st.divider()
-    st.markdown("### 3\ufe0f\u20e3  Précalcul des durées")
-    col_auto, col_info = st.columns([2, 3])
-    with col_auto:
-        if st.button("⏱️ Précalculer les durées (tous produits au barème)",
-                     use_container_width=True,
-                     help=(
-                         "Remplit automatiquement la colonne **Durée (min)** "
-                         "selon les barèmes ci-dessous (durée × quantité) :\n\n"
-                         "**WC chimique**\n"
-                         "• Nettoyer : 10 min/WC\n"
-                         "• Déposer : 15 min/WC\n"
-                         "• Retirer : 20 min/WC\n"
-                         "• Chargement : 15 min/WC\n"
-                         "• Déchargement : 5 min/WC\n\n"
-                         "**WC handicapé** (options ignorées)\n"
-                         "• Nettoyer : 20 min/WC\n"
-                         "• Déposer : 30 min/WC\n"
-                         "• Retirer : 40 min/WC\n"
-                         "• Chargement : 30 min/WC\n"
-                         "• Déchargement : 10 min/WC\n\n"
-                         "**Urinoir / Lave-main**\n"
-                         "• Déposer : 15 min/produit\n"
-                         "• Toutes les autres actions : 10 min/produit\n\n"
-                         "Vous pouvez ensuite ajuster manuellement."
-                     )):
-            _flush_editor()
-            df_tmp = st.session_state.df_stops.copy()
-            nb_maj = 0
-            nb_wcc = 0   # WC chimique mis à jour
-            nb_wch = 0   # WC handicapé mis à jour
-            nb_smp = 0   # Urinoir / Lave-main mis à jour
-            for idx, row in df_tmp.iterrows():
-                duree_auto = _auto_duree(
-                    row.get("Action", ""),
-                    row.get("Produit", ""),
-                    row.get("Quantité", 1),
-                )
-                if duree_auto is not None:
-                    df_tmp.at[idx, "Durée (min)"] = duree_auto
-                    nb_maj += 1
-                    produit = str(row.get("Produit", "")).strip()
-                    if produit == "WC handicapé":
-                        nb_wch += 1
-                    elif produit in PRODUITS_SIMPLES:
-                        nb_smp += 1
-                    else:
-                        nb_wcc += 1
-            st.session_state.df_stops = df_tmp
-            if "editor_stops" in st.session_state:
-                del st.session_state["editor_stops"]
-            if nb_maj > 0:
-                details = []
-                if nb_wcc > 0:
-                    details.append(f"**{nb_wcc}** WC chimique")
-                if nb_wch > 0:
-                    details.append(f"**{nb_wch}** WC handicapé")
-                if nb_smp > 0:
-                    details.append(f"**{nb_smp}** Urinoir/Lave-main")
-                st.success(f"✅ Durées précalculées pour {' · '.join(details)}.")
-            else:
-                st.info("ℹ️ Aucun arrêt au barème automatique trouvé à mettre à jour.")
-            st.rerun()
-    with col_info:
-        st.caption(
-            "💡 Les durées sont calculées automatiquement (× quantité) pour les "
-            "WC chimiques, les WC handicapés et les Urinoir/Lave-main. "
-            "La colonne **Durée (min)** reste modifiable manuellement après précalcul."
-        )
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # BLOC 4 — OPTIMISATION DE LA TOURNÉE
-    # ══════════════════════════════════════════════════════════════════════════
-    st.divider()
-    st.markdown("### 4\ufe0f\u20e3  Optimisation de la tournée")
+    st.markdown("### 3\ufe0f\u20e3  Optimisation de la tournée")
 
     if st.button("🚀 Optimiser la tournée", type="primary",
                  use_container_width=True, disabled=(n_valid < 1)):
