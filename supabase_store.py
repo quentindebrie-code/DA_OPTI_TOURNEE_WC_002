@@ -30,6 +30,12 @@ import uuid
 import requests
 
 
+# À incrémenter à chaque ajout de méthode : tournees.py recharge ce module (et
+# recrée les objets de stockage) si la version en mémoire est plus ancienne.
+# Streamlit Cloud ne recharge pas toujours les modules importés après un push.
+API_VERSION = 2
+
+
 class StoreError(Exception):
     """Erreur de lecture / écriture dans le stockage persistant."""
 

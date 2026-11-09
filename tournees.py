@@ -1595,20 +1595,36 @@ if "stops_import_warn"  not in st.session_state: st.session_state.stops_import_w
 # Le stockage est choisi une fois par session : Supabase si les secrets sont
 # configurés, sinon un repli en mémoire (bandeau d'avertissement affiché).
 
-from supabase_store import (SupabaseStore, MemoryStore, StoreError,
-                            read_supabase_config)
+import importlib as _importlib
+import supabase_store as _store_mod
+
+# Version minimale du module de stockage attendue par ce fichier. Après un
+# déploiement, Streamlit Cloud relance tournees.py mais peut garder l'ancien
+# module supabase_store en mémoire : on le recharge s'il est périmé.
+STORE_API_VERSION = 2
+if getattr(_store_mod, "API_VERSION", 1) < STORE_API_VERSION:
+    _store_mod = _importlib.reload(_store_mod)
+
+SupabaseStore        = _store_mod.SupabaseStore
+MemoryStore          = _store_mod.MemoryStore
+StoreError           = _store_mod.StoreError
+read_supabase_config = _store_mod.read_supabase_config
 
 
 @st.cache_resource(show_spinner=False)
-def _supabase_store(url: str, key: str):
+def _supabase_store(url: str, key: str, api_version: int):
+    # api_version fait partie de la clé de cache : un objet créé par une
+    # version précédente du module n'est jamais réutilisé.
     return SupabaseStore(url, key)
 
 
 def get_store():
     url, key = read_supabase_config(st.secrets)
     if url and key:
-        return _supabase_store(url, key)
-    if "_memory_store" not in st.session_state:
+        return _supabase_store(url, key, STORE_API_VERSION)
+    mem = st.session_state.get("_memory_store")
+    if mem is None or not isinstance(mem, MemoryStore):
+        # Absent, ou créé par une version précédente du module
         st.session_state._memory_store = MemoryStore()
     return st.session_state._memory_store
 
