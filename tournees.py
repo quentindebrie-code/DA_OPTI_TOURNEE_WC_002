@@ -1664,74 +1664,131 @@ for _k, _v in {"tournee_id": None, "tournee_nom": "", "tournee_saved_hash": None
         st.session_state[_k] = _v
 
 
-# ── Index des points de livraison (colonne « Client » du tableau de saisie) ──
+# ── Index base client (colonnes « Client » et « Adresse » de la saisie) ──────
+# La colonne « Client » ne propose que les noms (un client = une entrée) ; le
+# point de livraison se choisit ensuite dans la colonne « Adresse ».
 
-def _point_label(client: dict, point: dict) -> str:
-    detail = str(point.get("libelle") or "").strip() or str(point.get("adresse") or "").strip()
-    nom = str(client.get("nom") or "").strip()
-    return f"{nom} — {detail}" if detail else nom
-
-
-def client_points_index() -> dict:
-    """{libellé affiché: (fiche client, point de livraison)} pour la saisie."""
+def client_index() -> dict:
+    """{nom affiché: fiche client}. Noms en double suffixés « (2) », « (3) »…"""
     index = {}
     for c in st.session_state.get("clients_db", []):
-        for p in c.get("points", []):
-            label = base = _point_label(c, p)
-            n = 2
-            while label in index:
-                label = f"{base} ({n})"
-                n += 1
-            index[label] = (c, p)
+        name = base = str(c.get("nom") or "").strip() or "Sans nom"
+        n = 2
+        while name in index:
+            name = f"{base} ({n})"
+            n += 1
+        index[name] = c
     return index
 
 
-def autofill_from_client(df: pd.DataFrame, idx, label: str, index: dict) -> None:
-    """Complète la ligne idx de df à partir du point de livraison sélectionné.
+def address_index(cindex: dict) -> dict:
+    """{adresse: [(nom client, fiche, point), …]} pour tous les points connus."""
+    out = {}
+    for name, c in cindex.items():
+        for p in c.get("points", []):
+            addr = str(p.get("adresse") or "").strip()
+            if addr:
+                out.setdefault(addr, []).append((name, c, p))
+    return out
 
-    L'action n'est pas modifiée (elle dépend de la tournée). La durée est
-    recalculée au barème si le produit en relève.
+
+def client_from_legacy_label(value: str, cindex: dict) -> str:
+    """Ancien format « Nom — point » (première version) → « Nom »."""
+    v = str(value or "").strip()
+    if not v or v in cindex:
+        return v
+    for name in sorted(cindex, key=len, reverse=True):
+        if v.startswith(name + " — "):
+            return name
+    return v
+
+
+def _client_points(client: dict) -> list:
+    return [p for p in client.get("points", []) if str(p.get("adresse") or "").strip()]
+
+
+def _apply_point(df: pd.DataFrame, idx, client: dict, point: dict) -> None:
+    """Adresse, fenêtre (point sinon client) et observation du point choisi."""
+    nom = str(client.get("nom") or "").strip()
+    lib = str(point.get("libelle") or "").strip()
+    df.at[idx, "Nom du client"] = f"{nom} – {lib}" if lib else nom
+    df.at[idx, "Adresse"]      = str(point.get("adresse") or "").strip()
+    df.at[idx, "Pas avant"]    = point.get("pas_avant") or client.get("pas_avant") or ""
+    df.at[idx, "Pas après"]    = point.get("pas_apres") or client.get("pas_apres") or ""
+    df.at[idx, "Observations"] = str(point.get("observations") or "")
+
+
+def autofill_from_client(df: pd.DataFrame, idx, name: str, cindex: dict) -> None:
+    """Complète la ligne idx à partir de la fiche client choisie.
+
+    Prestation (produit, option, quantité, couleurs) et durée au barème. Si le
+    client n'a qu'un point de livraison, l'adresse est remplie aussi ; sinon
+    elle est à choisir dans la colonne « Adresse » (l'adresse actuelle est
+    conservée si elle appartient déjà à ce client). L'action n'est pas modifiée.
     """
-    if label not in index:
+    c = cindex.get(name)
+    if c is None:
         return
-    c, p = index[label]
     produit = c.get("produit") or "WC chimique"
-    option  = (c.get("option_produit") or "") if produit == "WC chimique" else ""
     try:
         qte = max(1, int(c.get("quantite") or 1))
     except (ValueError, TypeError):
         qte = 1
-    nom = str(c.get("nom") or "").strip()
-    lib = str(p.get("libelle") or "").strip()
-    df.at[idx, "Nom du client"] = f"{nom} – {lib}" if lib else nom
-    df.at[idx, "Adresse"]       = str(p.get("adresse") or "")
-    df.at[idx, "Produit"]       = produit
-    df.at[idx, "Option"]        = option
-    df.at[idx, "Quantité"]      = qte
-    df.at[idx, "Couleur"]       = couleurs_arret_texte(c.get("couleurs") or "")
-    df.at[idx, "Pas avant"]     = p.get("pas_avant") or c.get("pas_avant") or ""
-    df.at[idx, "Pas après"]     = p.get("pas_apres") or c.get("pas_apres") or ""
-    df.at[idx, "Observations"]  = str(p.get("observations") or "")
-    duree = _auto_duree(df.at[idx, "Action"] if "Action" in df.columns else "",
-                        produit, qte)
-    if duree is not None:
-        df.at[idx, "Durée (min)"] = duree
+    df.at[idx, "Client"]   = name
+    df.at[idx, "Produit"]  = produit
+    df.at[idx, "Option"]   = (c.get("option_produit") or "") if produit == "WC chimique" else ""
+    df.at[idx, "Quantité"] = qte
+    df.at[idx, "Couleur"]  = couleurs_arret_texte(c.get("couleurs") or "")
+    points = _client_points(c)
+    actuelle = str(df.at[idx, "Adresse"] or "").strip()
+    deja = next((p for p in points if str(p.get("adresse")).strip() == actuelle), None)
+    if len(points) == 1:
+        _apply_point(df, idx, c, points[0])
+    elif deja is not None:
+        _apply_point(df, idx, c, deja)
+    else:
+        df.at[idx, "Nom du client"] = str(c.get("nom") or "").strip()
+        df.at[idx, "Adresse"]      = ""
+        df.at[idx, "Pas avant"]    = c.get("pas_avant") or ""
+        df.at[idx, "Pas après"]    = c.get("pas_apres") or ""
+        df.at[idx, "Observations"] = ""
+    apply_auto_duree(df, idx)
 
 
-def match_client_by_address(df: pd.DataFrame, index: dict) -> pd.DataFrame:
+def autofill_from_address(df: pd.DataFrame, idx, cindex: dict, aindex: dict) -> None:
+    """Après le choix d'une adresse connue : fenêtre et observation du point.
+
+    Si l'adresse appartient à un autre client que celui de la ligne (ou si la
+    ligne n'a pas de client), la fiche du propriétaire est appliquée.
+    """
+    addr = str(df.at[idx, "Adresse"] or "").strip()
+    owners = aindex.get(addr)
+    if not owners:
+        return
+    current = str(df.at[idx, "Client"] or "").strip()
+    name, c, p = next((o for o in owners if o[0] == current), owners[0])
+    if name != current:
+        autofill_from_client(df, idx, name, cindex)
+        df.at[idx, "Adresse"] = addr
+    _apply_point(df, idx, c, p)
+
+
+def match_client_by_address(df: pd.DataFrame, cindex: dict) -> pd.DataFrame:
     """Renseigne « Client » pour les lignes importées dont l'adresse est connue."""
     if "Client" not in df.columns:
         df["Client"] = ""
     by_addr = {}
-    for label, (_c, p) in index.items():
-        by_addr.setdefault(_norm_txt(p.get("adresse", "")), label)
+    for name, c in cindex.items():
+        for p in c.get("points", []):
+            key = _norm_txt(p.get("adresse", ""))
+            if key:
+                by_addr.setdefault(key, name)
     for i, row in df.iterrows():
         if str(row.get("Client") or "").strip():
             continue
-        addr = _norm_txt(row.get("Adresse", ""))
-        lab = by_addr.get(addr) if addr else None
-        if lab:
-            df.at[i, "Client"] = lab
+        key = _norm_txt(row.get("Adresse", ""))
+        if key and key in by_addr:
+            df.at[i, "Client"] = by_addr[key]
     return df
 
 
@@ -4128,7 +4185,7 @@ with tab_saisie:
                 if "Couleur" not in _df_final.columns:
                     _df_final["Couleur"] = ""
                 _df_final = match_client_by_address(
-                    _df_final.reset_index(drop=True), client_points_index())
+                    _df_final.reset_index(drop=True), client_index())
                 st.session_state.df_stops           = _df_final.reset_index(drop=True)
                 st.session_state.stops_last_file_id = _file_id_stops
                 st.session_state.stops_import_name  = up_stops.name
@@ -4224,20 +4281,40 @@ with tab_saisie:
         st.session_state.df_stops["Couleur"] = (
             st.session_state.df_stops["Couleur"].map(couleurs_arret_texte))
 
-        # Colonne « Client » (base client) : migration + options du menu
+        # Colonnes « Client » et « Adresse » (base client) : migration + menus
         if "Client" not in st.session_state.df_stops.columns:
             st.session_state.df_stops.insert(0, "Client", "")
+        _cindex = client_index()
+        _aindex = address_index(_cindex)
         st.session_state.df_stops["Client"] = (
-            st.session_state.df_stops["Client"].fillna("").astype(str))
-        _cp_index = client_points_index()
-        _client_opts = [""] + list(_cp_index.keys())
+            st.session_state.df_stops["Client"].fillna("").astype(str)
+            .map(lambda v: client_from_legacy_label(v, _cindex)))
+        _client_opts = [""] + list(_cindex.keys())
         _client_opts += sorted(set(st.session_state.df_stops["Client"])
                                - set(_client_opts))
+        # Adresses : points de livraison groupés par client, puis adresses
+        # libres déjà présentes dans le tableau (import Excel, saisie hors base)
+        _addr_opts = [""]
+        for _c in _cindex.values():
+            for _p in _client_points(_c):
+                _a = str(_p["adresse"]).strip()
+                if _a not in _addr_opts:
+                    _addr_opts.append(_a)
+        _addr_opts += sorted(set(st.session_state.df_stops["Adresse"].fillna("")
+                                 .astype(str).str.strip()) - set(_addr_opts))
+
+        def _fmt_adresse(addr):
+            owners = _aindex.get(addr)
+            if not owners:
+                return addr
+            name, _c, _p = owners[0]
+            lib = str(_p.get("libelle") or "").strip()
+            return f"{name}{' · ' + lib if lib else ''} — {addr}"
 
         editor_df = st.session_state.df_stops.copy()
         editor_df["Couleur"] = editor_df["Couleur"].map(couleurs_arret).astype(object)
 
-        if not _cp_index:
+        if not _cindex:
             st.caption("📇 La colonne **Client** propose les fiches de l'onglet "
                        "**Base client** : créez-y vos clients pour remplir les "
                        "lignes automatiquement.")
@@ -4252,11 +4329,11 @@ with tab_saisie:
             column_config={
                 "Client": st.column_config.SelectboxColumn(
                     "📇 Client", width="medium", options=_client_opts,
-                    help="Choisissez un client et son point de livraison dans la "
-                         "base : adresse, produit, option, quantité, couleurs, "
-                         "fenêtre d'intervention et observation sont remplis "
-                         "automatiquement (l'action reste à choisir). "
-                         "Les champs restent modifiables ensuite."),
+                    help="Choisissez le client dans la base : produit, option, "
+                         "quantité et couleurs sont remplis automatiquement "
+                         "(l'action reste à choisir). S'il n'a qu'une adresse, "
+                         "elle est remplie aussi ; sinon choisissez-la dans la "
+                         "colonne Adresse."),
                 "Suppr": st.column_config.CheckboxColumn(
                     "🗑️", width="small", default=False,
                     help="Cochez les lignes à supprimer, puis cliquez sur "
@@ -4285,9 +4362,14 @@ with tab_saisie:
                     help="Nombre d'unités. Pour WC chimique : 1 option par WC."),
                 "Nom du client": st.column_config.TextColumn(
                     "Nom du client", width="medium"),
-                "Adresse": st.column_config.TextColumn(
-                    "Adresse complète (rue, ville, CP)", width="large",
-                    help="Ex : Place d'Hautpoul 81600 Gaillac"),
+                "Adresse": st.column_config.SelectboxColumn(
+                    "📍 Adresse complète", width="large", options=_addr_opts,
+                    format_func=_fmt_adresse,
+                    help="Choisissez le point de livraison : tapez le nom du "
+                         "client ou la ville pour filtrer. La fenêtre "
+                         "d'intervention et l'observation du point sont "
+                         "reprises. Adresse hors base client : bouton "
+                         "« ✍️ Adresse hors base » à droite."),
                 "Durée (min)": st.column_config.NumberColumn(
                     "⏱ Durée (min)", width="small", min_value=1, max_value=480,
                     step=5, default=30,
@@ -4318,30 +4400,35 @@ with tab_saisie:
         # l'action, le produit et la quantité de la ligne ne changent pas.
         _es = st.session_state.get("editor_stops") or {}
         _n_base   = len(st.session_state.df_stops)
-        _triggers = []   # (index d'origine, libellé client | None, recalcul durée)
+        _triggers = []   # (index d'origine, client | None, adresse modifiée, durée)
         for _i, _c in (_es.get("edited_rows") or {}).items():
             _cl  = "Client" in _c
+            _ad  = "Adresse" in _c
             _dur = any(k in _c for k in DUREE_TRIGGER_COLS)
-            if _cl or _dur:
-                _triggers.append((int(_i), _c.get("Client") if _cl else None, _dur))
+            if _cl or _ad or _dur:
+                _triggers.append((int(_i), _c.get("Client") if _cl else None, _ad, _dur))
         for _j, _r in enumerate(_es.get("added_rows") or []):
             _cl  = bool(_r.get("Client"))
+            _ad  = bool(_r.get("Adresse"))
             _dur = any(_r.get(k) not in (None, "") for k in DUREE_TRIGGER_COLS)
-            if _cl or _dur:
-                _triggers.append((_n_base + _j, _r.get("Client") if _cl else None, _dur))
+            if _cl or _ad or _dur:
+                _triggers.append((_n_base + _j, _r.get("Client") if _cl else None, _ad, _dur))
         if _triggers:
             _deleted = sorted(int(d) for d in (_es.get("deleted_rows") or []))
             _flush_editor()
             _df_fill = st.session_state.df_stops
-            for _i, _lab, _dur in _triggers:
+            _df_fill["Adresse"] = _df_fill["Adresse"].fillna("").astype(str)
+            for _i, _lab, _ad, _dur in _triggers:
                 if _i in _deleted:
                     continue
                 _i_new = _i - sum(1 for d in _deleted if d < _i)
                 if not (0 <= _i_new < len(_df_fill)):
                     continue
                 if _lab:
-                    autofill_from_client(_df_fill, _i_new, _lab, _cp_index)
-                elif _dur:
+                    autofill_from_client(_df_fill, _i_new, _lab, _cindex)
+                if _ad and str(_df_fill.at[_i_new, "Adresse"]).strip():
+                    autofill_from_address(_df_fill, _i_new, _cindex, _aindex)
+                if _dur and not _lab:
                     apply_auto_duree(_df_fill, _i_new)
             _df_fill["Client"] = _df_fill["Client"].fillna("").astype(str)
             st.session_state.df_stops = _df_fill
@@ -4352,6 +4439,17 @@ with tab_saisie:
         valid_rows = live_df[live_df["Adresse"].fillna("").str.strip() != ""]
         n_valid    = len(valid_rows)
         st.caption(f"📍 **{n_valid}** arrêt(s) avec adresse renseignée")
+
+        # Clients à plusieurs points dont l'adresse reste à choisir
+        _a_choisir = [
+            f"ligne **{i}** ({row['Client']})"
+            for i, row in live_df.iterrows()
+            if str(row.get("Client") or "").strip() in _cindex
+            and not str(row.get("Adresse") or "").strip()
+        ]
+        if _a_choisir:
+            st.info("📍 Adresse de livraison à choisir dans la colonne **Adresse** : "
+                    + ", ".join(_a_choisir) + ".")
 
         # Validation Produit / Option
         if "Produit" in live_df.columns and "Option" in live_df.columns:
@@ -4457,6 +4555,29 @@ with tab_saisie:
             if "editor_stops" in st.session_state:
                 del st.session_state["editor_stops"]
             st.rerun()
+
+        with st.popover("✍️ Adresse hors base", use_container_width=True,
+                        help="Saisir une adresse qui n'est pas dans la Base client "
+                             "(client ponctuel). Pour un client régulier, "
+                             "ajoutez plutôt un point de livraison à sa fiche."):
+            _lignes = list(range(len(live_df)))
+            _ligne_libre = st.selectbox(
+                "Ligne", _lignes, key="adresse_libre_ligne",
+                format_func=lambda i: f"Ligne {i}"
+                    + (f" – {live_df.at[i, 'Client']}"
+                       if str(live_df.at[i, "Client"] or "").strip() else ""))
+            _txt_libre = st.text_input("Adresse complète", key="adresse_libre_txt",
+                                       placeholder="Rue, code postal, ville")
+            if st.button("Appliquer", type="primary", use_container_width=True,
+                         disabled=not str(_txt_libre or "").strip()):
+                _flush_editor()
+                _df_l = st.session_state.df_stops
+                if _ligne_libre is not None and _ligne_libre < len(_df_l):
+                    _df_l.at[_ligne_libre, "Adresse"] = _txt_libre.strip()
+                    st.session_state.df_stops = _df_l
+                if "editor_stops" in st.session_state:
+                    del st.session_state["editor_stops"]
+                st.rerun()
 
         if st.button("➖ Supprimer le dernier", use_container_width=True):
             _flush_editor()
@@ -5018,7 +5139,9 @@ with tab_clients:
                     "3. **Points de livraison** — une ou plusieurs adresses, chacune "
                     "avec sa fenêtre spécifique et son observation\n\n"
                     "Dans **📋 Saisie des arrêts**, choisissez le client dans la "
-                    "première colonne : la ligne se remplit toute seule.")
+                    "première colonne puis, s'il a plusieurs adresses, le point "
+                    "de livraison dans la colonne **Adresse** : la ligne se "
+                    "remplit toute seule.")
         else:
             _is_new = _sel == "__new__"
             _titre = st.session_state[_bc_key("nom")] or "Nouveau client"
@@ -5070,8 +5193,9 @@ with tab_clients:
                 _pts = st.session_state.bc_points
                 st.markdown(f"**③ Points de livraison ({len(_pts)})**")
                 st.caption("Un même client peut être livré à plusieurs adresses "
-                           "(chantiers, sites, événements). Chaque point apparaît "
-                           "séparément dans la colonne Client de la saisie.")
+                           "(chantiers, sites, événements). Dans la saisie, le client "
+                           "se choisit une fois dans la colonne Client, puis le point "
+                           "dans la colonne Adresse.")
                 _def_av = _bc_hhmm(st.session_state[_bc_key("pas_avant")])
                 _def_ap = _bc_hhmm(st.session_state[_bc_key("pas_apres")])
                 for _i, _p in enumerate(_pts, 1):
