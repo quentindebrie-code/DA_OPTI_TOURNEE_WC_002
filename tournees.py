@@ -133,15 +133,54 @@ PRODUIT_SIMPLE_DUREE_DEPOSE = 15   # minutes par produit pour l'action Déposer
 PAUSE_DEJEUNER_MIN = 30  # pause méridienne ajoutée une fois par tournée
 
 
+# Barème modifiable dans l'application (onglet Saisie) et enregistré dans
+# Supabase. Les constantes ci-dessus ne servent plus que de valeurs par défaut.
+# Une case vide = produit hors barème pour cette action (durée saisie à la main).
+BAREME_PRODUITS = ["WC chimique", "WC handicapé", "WC Luxe", "Urinoir", "Lave-main"]
+BAREME_ACTIONS  = ["Nettoyer", "Déposer", "Retirer", "Chargement", "Déchargement"]
+BAREME_SETTING_KEY = "bareme_durees"
+
+
+def bareme_defaut() -> dict:
+    simple = {a: (PRODUIT_SIMPLE_DUREE_DEPOSE if a == "Déposer" else PRODUIT_SIMPLE_DUREE_STD)
+              for a in BAREME_ACTIONS}
+    return {
+        "WC chimique":  {a: WC_DUREES_PAR_ACTION.get(a) for a in BAREME_ACTIONS},
+        "WC handicapé": {a: WC_HANDICAPE_DUREES_PAR_ACTION.get(a) for a in BAREME_ACTIONS},
+        "WC Luxe":      {a: None for a in BAREME_ACTIONS},
+        "Urinoir":      dict(simple),
+        "Lave-main":    dict(simple),
+    }
+
+
+def normaliser_bareme(valeur) -> dict:
+    """Complète / nettoie un barème lu en base (produits ou actions manquants)."""
+    out = bareme_defaut()
+    if isinstance(valeur, dict):
+        for p in BAREME_PRODUITS:
+            src = valeur.get(p)
+            if not isinstance(src, dict):
+                continue
+            for a in BAREME_ACTIONS:
+                if a not in src:
+                    continue
+                v = src.get(a)
+                try:
+                    out[p][a] = int(v) if v not in (None, "") and int(v) > 0 else None
+                except (ValueError, TypeError):
+                    out[p][a] = None
+    return out
+
+
+def bareme_actif() -> dict:
+    return st.session_state.get("bareme_durees") or bareme_defaut()
+
+
 def _auto_duree(action: str, produit: str, quantite) -> int | None:
     """
     Retourne la durée automatique (en minutes) pour un arrêt, ou None si le
-    produit ne relève d'aucun barème automatique.
-
-    - WC chimique      : barème WC_DUREES_PAR_ACTION            × quantité
-    - WC handicapé     : barème WC_HANDICAPE_DUREES_PAR_ACTION  × quantité
-                         (les options sont ignorées)
-    - Urinoir / Lave-main : 10 min × quantité (15 min × quantité si action Déposer)
+    produit / l'action ne relève d'aucun barème : durée unitaire du barème
+    actif (modifiable dans l'application) × quantité.
     """
     produit_norm = str(produit).strip()
     action_norm  = str(action).strip()
@@ -151,23 +190,13 @@ def _auto_duree(action: str, produit: str, quantite) -> int | None:
     except (ValueError, TypeError):
         qty = 1
 
-    # Produits simples : Urinoir / Lave-main
-    if produit_norm in PRODUITS_SIMPLES:
-        base = (PRODUIT_SIMPLE_DUREE_DEPOSE if action_norm == "Déposer"
-                else PRODUIT_SIMPLE_DUREE_STD)
-        return base * qty
-
-    if produit_norm == "WC chimique":
-        bareme = WC_DUREES_PAR_ACTION
-    elif produit_norm == "WC handicapé":
-        bareme = WC_HANDICAPE_DUREES_PAR_ACTION
-    else:
+    base = (bareme_actif().get(produit_norm) or {}).get(action_norm)
+    if base in (None, ""):
         return None
-
-    base = bareme.get(action_norm)
-    if base is None:
+    try:
+        return int(base) * qty
+    except (ValueError, TypeError):
         return None
-    return base * qty
 
 
 # Colonnes du tableau de saisie dont la modification recalcule la durée
@@ -1083,9 +1112,9 @@ def export_stops_excel(df_stops: pd.DataFrame | None = None,
         ("Quantité", "Entier 1 à 20", "Nombre d'unités concernées. Par défaut : 1."),
         ("Nom du client", "Facultatif", "Nom du client ou du site d'intervention."),
         ("Durée (min)", "Entier 1 à 480",
-         "Durée d'intervention sur place. Recalculée automatiquement au barème "
-         "à l'import pour les WC chimiques, WC handicapés, Urinoirs et "
-         "Lave-mains ; conservée telle quelle pour les autres produits."),
+         "Durée d'intervention sur place. Recalculée automatiquement à l'import "
+         "selon le barème de l'application ; conservée telle quelle pour les "
+         "produits hors barème."),
         ("Pas avant", "Format HH:MM",
          "Heure d'arrivée au plus tôt. Ex : 09:00. Laisser vide si aucune contrainte."),
         ("Pas après", "Format HH:MM",
@@ -1655,6 +1684,16 @@ if "stock_db_loaded" not in st.session_state:
             st.session_state.stock_db_maj = _maj_db
     except StoreError as e:
         st.session_state.store_error = str(e)
+
+# Barème des durées (modifiable dans l'onglet Saisie)
+if "bareme_durees" not in st.session_state:
+    st.session_state.bareme_db_error = None
+    try:
+        st.session_state.bareme_durees = normaliser_bareme(
+            STORE.get_setting(BAREME_SETTING_KEY))
+    except StoreError as e:
+        st.session_state.bareme_durees = bareme_defaut()
+        st.session_state.bareme_db_error = str(e)
 
 # Tournée enregistrée actuellement ouverte dans le tableau de saisie
 for _k, _v in {"tournee_id": None, "tournee_nom": "", "tournee_saved_hash": None,
@@ -4375,8 +4414,8 @@ with tab_saisie:
                     step=5, default=30,
                     help="Calculée automatiquement au barème (× quantité) dès que "
                          "l'action, le produit ou la quantité change. Reste "
-                         "modifiable à la main ; pour un WC Luxe ou un WC client "
-                         "(hors barème), saisissez-la."),
+                         "modifiable à la main ; pour un produit hors barème "
+                         "(WC client, WC Luxe par défaut), saisissez-la."),
                 "Pas avant": st.column_config.TextColumn(
                     "⏰ Pas avant", width="small",
                     help="Arriver au plus tôt à cette heure (format HH:MM). Ex : 09:00"),
@@ -4470,23 +4509,70 @@ with tab_saisie:
                 "l'option est automatiquement vidée."
             )
 
-        # Barème appliqué automatiquement (généré depuis les constantes)
-        with st.expander("⏱️ Durées calculées automatiquement — barème appliqué"):
-            _bar = pd.DataFrame({
-                "Action": ACTIONS_CATALOGUE,
-                "WC chimique": [WC_DUREES_PAR_ACTION.get(a) for a in ACTIONS_CATALOGUE],
-                "WC handicapé": [WC_HANDICAPE_DUREES_PAR_ACTION.get(a)
-                                 for a in ACTIONS_CATALOGUE],
-                "Urinoir / Lave-main": [PRODUIT_SIMPLE_DUREE_DEPOSE if a == "Déposer"
-                                        else PRODUIT_SIMPLE_DUREE_STD
-                                        for a in ACTIONS_CATALOGUE],
-            })
-            st.dataframe(_bar, hide_index=True, use_container_width=True)
-            st.caption("Minutes par unité, multipliées par la quantité. La durée est "
-                       "recalculée dès que l'action, le produit ou la quantité d'une "
-                       "ligne change, à l'import Excel et à la sélection d'un client. "
-                       "Elle reste modifiable à la main. **WC Luxe** et **WC client** "
-                       "sont hors barème : saisissez leur durée.")
+        # Barème des durées : modifiable et enregistré dans Supabase
+        with st.expander("⏱️ Barème des durées (modifiable)"):
+            _bar_src = bareme_actif()
+            _bar_df = pd.DataFrame(
+                {p: [_bar_src[p].get(a) for a in BAREME_ACTIONS] for p in BAREME_PRODUITS},
+                index=BAREME_ACTIONS).astype("Int64")
+            _bar_df.index.name = "Action"
+            st.caption("Minutes **par unité**, multipliées par la quantité de la "
+                       "ligne. Case vide = hors barème : la durée se saisit à la main "
+                       "dans le tableau (cas du WC Luxe par défaut). Le WC client "
+                       "n'a pas de barème.")
+            _bar_edit = st.data_editor(
+                _bar_df, use_container_width=True, key=f"editor_bareme_{st.session_state.get('bareme_nonce', 0)}",
+                column_config={p: st.column_config.NumberColumn(
+                    p, min_value=1, max_value=240, step=5, format="%d min")
+                    for p in BAREME_PRODUITS})
+            _bar_appli = st.checkbox(
+                "Recalculer aussi les durées des arrêts déjà saisis", value=True,
+                key="bareme_appliquer",
+                help="Les durées saisies à la main sur les lignes au barème "
+                     "seront remplacées.")
+            _bb1, _bb2 = st.columns(2)
+            if _bb1.button("💾 Enregistrer le barème", type="primary",
+                           use_container_width=True):
+                _nouveau = normaliser_bareme({
+                    p: {a: (None if pd.isna(_bar_edit.at[a, p]) else int(_bar_edit.at[a, p]))
+                        for a in BAREME_ACTIONS}
+                    for p in BAREME_PRODUITS})
+                try:
+                    STORE.set_setting(BAREME_SETTING_KEY, _nouveau)
+                    st.session_state.bareme_db_error = None
+                except StoreError as e:
+                    st.session_state.bareme_db_error = str(e)
+                # Appliqué à la session même si l'enregistrement a échoué
+                st.session_state.bareme_durees = _nouveau
+                if _bar_appli:
+                    _flush_editor()
+                    st.session_state.df_stops = apply_auto_durees_df(
+                        st.session_state.df_stops)
+                    if "editor_stops" in st.session_state:
+                        del st.session_state["editor_stops"]
+                st.session_state.bareme_nonce = st.session_state.get("bareme_nonce", 0) + 1
+                if not st.session_state.bareme_db_error:
+                    st.toast("✅ Barème enregistré", icon="⏱️")
+                st.rerun()
+            if _bb2.button("♻️ Revenir aux valeurs par défaut", use_container_width=True):
+                st.session_state.bareme_durees = bareme_defaut()
+                try:
+                    STORE.set_setting(BAREME_SETTING_KEY, bareme_defaut())
+                    st.session_state.bareme_db_error = None
+                except StoreError as e:
+                    st.session_state.bareme_db_error = str(e)
+                st.session_state.bareme_nonce = st.session_state.get("bareme_nonce", 0) + 1
+                st.rerun()
+            if st.session_state.get("bareme_db_error"):
+                st.warning(
+                    "⚠️ Le barème n'a pas pu être lu ou enregistré dans Supabase : il "
+                    "ne sera conservé que pour cette session. Exécutez à nouveau "
+                    "`supabase_schema.sql` dans Supabase (SQL Editor) pour créer la "
+                    "table `parametres`.  \n"
+                    f"Détail : {st.session_state.bareme_db_error}")
+            elif not STORE.persistent:
+                st.caption("☁️ Supabase non configuré : le barème modifié ne sera "
+                           "conservé que pour cette session.")
 
         # ── Contrôle temps réel de la disponibilité en stock ──────────────────
         _besoins_live = besoins_tournee(

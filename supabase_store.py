@@ -154,6 +154,17 @@ class SupabaseStore:
     def save_stock(self, rows: list[dict]) -> None:
         self._req("POST", "rpc/replace_stock", json={"p_rows": rows})
 
+    # ── Paramètres (barème des durées…) ──────────────────────────────────────
+    def get_setting(self, cle: str):
+        rows = self._req("GET", "parametres", params={
+            "select": "valeur", "cle": f"eq.{cle}"}) or []
+        return rows[0]["valeur"] if rows else None
+
+    def set_setting(self, cle: str, valeur) -> None:
+        self._req("POST", "parametres",
+                  json={"cle": cle, "valeur": valeur, "updated_at": _now_iso()},
+                  prefer="resolution=merge-duplicates,return=minimal")
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # REPLI MÉMOIRE (aucune persistance entre sessions)
@@ -221,6 +232,14 @@ class MemoryStore:
     def save_stock(self, rows: list[dict]) -> None:
         self.stock = copy.deepcopy(rows)
         self.stock_maj = _now_iso()
+
+    def get_setting(self, cle: str):
+        return copy.deepcopy(getattr(self, "settings", {}).get(cle))
+
+    def set_setting(self, cle: str, valeur) -> None:
+        if not hasattr(self, "settings"):
+            self.settings = {}
+        self.settings[cle] = copy.deepcopy(valeur)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

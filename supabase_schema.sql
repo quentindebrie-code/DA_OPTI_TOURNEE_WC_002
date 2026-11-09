@@ -65,6 +65,13 @@ create table if not exists public.stock (
     primary key (article, couleur)
 );
 
+-- ── Paramètres de l'application (barème des durées…) ───────────────────────
+create table if not exists public.parametres (
+    cle         text primary key,
+    valeur      jsonb not null,
+    updated_at  timestamptz not null default now()
+);
+
 -- ── Fonctions (écritures atomiques) ────────────────────────────────────────
 
 -- Enregistre une fiche client et ses points de livraison en une transaction.
@@ -152,6 +159,7 @@ alter table public.clients          enable row level security;
 alter table public.points_livraison enable row level security;
 alter table public.tournees         enable row level security;
 alter table public.stock            enable row level security;
+alter table public.parametres       enable row level security;
 
 revoke all on function public.save_client(jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.replace_stock(jsonb)       from public, anon, authenticated;
