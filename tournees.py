@@ -1437,6 +1437,7 @@ st.markdown("""
 
 def _init_df():
     return pd.DataFrame({
+        "Client":        ["",            "",            ""],
         "Suppr":         [False,         False,         False],
         "Action":        ["Nettoyer",    "Nettoyer",    "Nettoyer"],
         "Produit":       ["WC chimique", "WC chimique", "WC chimique"],
@@ -1530,6 +1531,387 @@ if "stops_last_file_id" not in st.session_state: st.session_state.stops_last_fil
 if "stops_import_name"  not in st.session_state: st.session_state.stops_import_name  = None
 if "stops_import_msg"   not in st.session_state: st.session_state.stops_import_msg   = None
 if "stops_import_warn"  not in st.session_state: st.session_state.stops_import_warn  = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERSISTANCE SUPABASE — base client, tournées enregistrées, stock du parc
+# ─────────────────────────────────────────────────────────────────────────────
+# Le stockage est choisi une fois par session : Supabase si les secrets sont
+# configurés, sinon un repli en mémoire (bandeau d'avertissement affiché).
+
+from supabase_store import (SupabaseStore, MemoryStore, StoreError,
+                            read_supabase_config)
+
+
+@st.cache_resource(show_spinner=False)
+def _supabase_store(url: str, key: str):
+    return SupabaseStore(url, key)
+
+
+def get_store():
+    url, key = read_supabase_config(st.secrets)
+    if url and key:
+        return _supabase_store(url, key)
+    if "_memory_store" not in st.session_state:
+        st.session_state._memory_store = MemoryStore()
+    return st.session_state._memory_store
+
+
+STORE = get_store()
+
+
+def _stock_to_rows(df: pd.DataFrame) -> list[dict]:
+    df = _clean_stock_df(df)
+    return [{"article": str(r["Article"]), "couleur": str(r["Couleur"] or ""),
+             "installes": int(r["Installés"]), "en_stock": int(r["En stock"])}
+            for _, r in df.iterrows()]
+
+
+def _rows_to_stock(rows: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame([{"Article": r.get("article", ""), "Couleur": r.get("couleur", ""),
+                        "Installés": r.get("installes", 0), "En stock": r.get("en_stock", 0)}
+                       for r in rows], columns=STOCK_COLUMNS)
+    return _clean_stock_df(df)
+
+
+def persist_stock(df: pd.DataFrame) -> bool:
+    """Enregistre le stock dans Supabase. Retourne True si l'écriture a réussi."""
+    try:
+        STORE.save_stock(_stock_to_rows(df))
+        st.session_state.stock_db_ok  = True
+        st.session_state.stock_db_maj = datetime.datetime.now()
+        st.session_state.store_error  = None
+        return True
+    except StoreError as e:
+        st.session_state.store_error = str(e)
+        return False
+
+
+def _fmt_maj(value) -> str:
+    """Formate une date de mise à jour (ISO ou datetime) en heure locale."""
+    if not value:
+        return ""
+    try:
+        if isinstance(value, str):
+            value = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if value.tzinfo is not None:
+            value = value.astimezone()
+        return value.strftime("%d/%m/%Y %H:%M")
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def refresh_clients() -> None:
+    try:
+        st.session_state.clients_db  = STORE.list_clients()
+        st.session_state.store_error = None
+    except StoreError as e:
+        st.session_state.store_error = str(e)
+        st.session_state.setdefault("clients_db", [])
+
+
+# Chargement initial (une seule fois par session)
+if "store_error" not in st.session_state:
+    st.session_state.store_error = None
+if "clients_db" not in st.session_state:
+    refresh_clients()
+if "stock_db_loaded" not in st.session_state:
+    st.session_state.stock_db_loaded = True
+    st.session_state.stock_db_ok  = False
+    st.session_state.stock_db_maj = None
+    try:
+        _rows_db, _maj_db = STORE.load_stock()
+        if _rows_db:
+            st.session_state.df_stock     = _rows_to_stock(_rows_db)
+            st.session_state.stock_source = f"{STORE.label} (enregistré)"
+            st.session_state.stock_db_ok  = True
+            st.session_state.stock_db_maj = _maj_db
+    except StoreError as e:
+        st.session_state.store_error = str(e)
+
+# Tournée enregistrée actuellement ouverte dans le tableau de saisie
+for _k, _v in {"tournee_id": None, "tournee_nom": "", "tournee_saved_hash": None,
+               "tournee_saved_at": None, "tournee_autosave": True,
+               "tournee_save_error": None}.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+
+# ── Index des points de livraison (colonne « Client » du tableau de saisie) ──
+
+def _point_label(client: dict, point: dict) -> str:
+    detail = str(point.get("libelle") or "").strip() or str(point.get("adresse") or "").strip()
+    nom = str(client.get("nom") or "").strip()
+    return f"{nom} — {detail}" if detail else nom
+
+
+def client_points_index() -> dict:
+    """{libellé affiché: (fiche client, point de livraison)} pour la saisie."""
+    index = {}
+    for c in st.session_state.get("clients_db", []):
+        for p in c.get("points", []):
+            label = base = _point_label(c, p)
+            n = 2
+            while label in index:
+                label = f"{base} ({n})"
+                n += 1
+            index[label] = (c, p)
+    return index
+
+
+def autofill_from_client(df: pd.DataFrame, idx, label: str, index: dict) -> None:
+    """Complète la ligne idx de df à partir du point de livraison sélectionné.
+
+    L'action n'est pas modifiée (elle dépend de la tournée). La durée est
+    recalculée au barème si le produit en relève.
+    """
+    if label not in index:
+        return
+    c, p = index[label]
+    produit = c.get("produit") or "WC chimique"
+    option  = (c.get("option_produit") or "") if produit == "WC chimique" else ""
+    try:
+        qte = max(1, int(c.get("quantite") or 1))
+    except (ValueError, TypeError):
+        qte = 1
+    nom = str(c.get("nom") or "").strip()
+    lib = str(p.get("libelle") or "").strip()
+    df.at[idx, "Nom du client"] = f"{nom} – {lib}" if lib else nom
+    df.at[idx, "Adresse"]       = str(p.get("adresse") or "")
+    df.at[idx, "Produit"]       = produit
+    df.at[idx, "Option"]        = option
+    df.at[idx, "Quantité"]      = qte
+    df.at[idx, "Couleur"]       = couleurs_arret_texte(c.get("couleurs") or "")
+    df.at[idx, "Pas avant"]     = p.get("pas_avant") or c.get("pas_avant") or ""
+    df.at[idx, "Pas après"]     = p.get("pas_apres") or c.get("pas_apres") or ""
+    df.at[idx, "Observations"]  = str(p.get("observations") or "")
+    duree = _auto_duree(df.at[idx, "Action"] if "Action" in df.columns else "",
+                        produit, qte)
+    if duree is not None:
+        df.at[idx, "Durée (min)"] = duree
+
+
+def match_client_by_address(df: pd.DataFrame, index: dict) -> pd.DataFrame:
+    """Renseigne « Client » pour les lignes importées dont l'adresse est connue."""
+    if "Client" not in df.columns:
+        df["Client"] = ""
+    by_addr = {}
+    for label, (_c, p) in index.items():
+        by_addr.setdefault(_norm_txt(p.get("adresse", "")), label)
+    for i, row in df.iterrows():
+        if str(row.get("Client") or "").strip():
+            continue
+        addr = _norm_txt(row.get("Adresse", ""))
+        lab = by_addr.get(addr) if addr else None
+        if lab:
+            df.at[i, "Client"] = lab
+    return df
+
+
+# ── Tournées enregistrées ────────────────────────────────────────────────────
+import json as _json
+import hashlib as _hashlib
+
+SAISIE_COLUMNS = ["Client", "Suppr"] + STOPS_COLUMNS
+
+
+def _stops_records(df: pd.DataFrame) -> list[dict]:
+    """Lignes significatives du tableau de saisie, sérialisables en JSON."""
+    if df is None or len(df) == 0:
+        return []
+    out = df.drop(columns=["Suppr"], errors="ignore").copy()
+    def _txt(col):
+        return (out[col].fillna("").astype(str).str.strip()
+                if col in out.columns else pd.Series([""] * len(out), index=out.index))
+    keep = (_txt("Adresse") != "") | (_txt("Client") != "") | (_txt("Nom du client") != "")
+    out = out[keep]
+    return _json.loads(out.to_json(orient="records", force_ascii=False))
+
+
+def _stops_df_from_records(records: list[dict]) -> pd.DataFrame:
+    if not records:
+        return _init_df()
+    df = pd.DataFrame(records)
+    defaults = {"Client": "", "Suppr": False, "Action": "Nettoyer",
+                "Produit": "WC chimique", "Option": "", "Couleur": "",
+                "Quantité": 1, "Nom du client": "", "Adresse": "",
+                "Durée (min)": 30, "Pas avant": "", "Pas après": "",
+                "Observations": ""}
+    for col, val in defaults.items():
+        if col not in df.columns:
+            df[col] = val
+        if col in ("Quantité", "Durée (min)"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(val).astype(int)
+        elif col == "Suppr":
+            df[col] = False
+        else:
+            df[col] = df[col].fillna(val).astype(str)
+    df["Couleur"] = df["Couleur"].map(couleurs_arret_texte)
+    return _normalize_option(df[SAISIE_COLUMNS].reset_index(drop=True))
+
+
+def _tournee_meta() -> dict:
+    hm = st.session_state.heure_min_depart
+    return {"depot_depart_key": st.session_state.depot_depart_key,
+            "depot_retour_key": st.session_state.depot_retour_key,
+            "heure_min_depart": hm.strftime("%H:%M") if hm else None}
+
+
+def _tournee_hash(records, nom) -> str:
+    payload = {"stops": records, "nom": nom,
+               "date": st.session_state.tour_date.isoformat(),
+               "driver": st.session_state.driver, "meta": _tournee_meta()}
+    return _hashlib.md5(_json.dumps(payload, sort_keys=True, default=str)
+                        .encode("utf-8")).hexdigest()
+
+
+def _default_tournee_nom() -> str:
+    nom = f"Tournée du {st.session_state.tour_date.strftime('%d/%m/%Y')}"
+    if str(st.session_state.driver or "").strip():
+        nom += f" – {st.session_state.driver.strip()}"
+    return nom
+
+
+def save_tournee(df_live: pd.DataFrame, nom: str, as_new: bool = False) -> bool:
+    """Enregistre (ou met à jour) la tournée affichée. True si succès."""
+    nom = str(nom or "").strip() or _default_tournee_nom()
+    records = _stops_records(df_live)
+    try:
+        tid = STORE.save_tournee(
+            None if as_new else st.session_state.tournee_id, nom,
+            st.session_state.tour_date.isoformat(), st.session_state.driver or "",
+            records, _tournee_meta())
+    except StoreError as e:
+        st.session_state.tournee_save_error = str(e)
+        return False
+    st.session_state.tournee_id         = tid
+    st.session_state.tournee_nom        = nom
+    st.session_state.tournee_saved_hash = _tournee_hash(records, nom)
+    st.session_state.tournee_saved_at   = datetime.datetime.now()
+    st.session_state.tournee_save_error = None
+    st.session_state.pop("tournees_count", None)
+    return True
+
+
+def load_tournee(tournee_id: str, as_copy: bool = False) -> bool:
+    try:
+        t = STORE.get_tournee(tournee_id)
+    except StoreError as e:
+        st.error(f"❌ {e}")
+        return False
+    if not t:
+        st.error("❌ Cette tournée n'existe plus.")
+        return False
+    st.session_state.df_stops = _stops_df_from_records(t.get("stops") or [])
+    st.session_state.result   = None
+    reset_manual_order()
+    if "editor_stops" in st.session_state:
+        del st.session_state["editor_stops"]
+    st.session_state.stops_import_msg  = None
+    st.session_state.stops_import_warn = []
+    st.session_state.driver = t.get("chauffeur") or ""
+    meta = t.get("meta") or {}
+    if meta.get("depot_depart_key") in DEPOTS:
+        st.session_state.depot_depart_key = meta["depot_depart_key"]
+    if meta.get("depot_retour_key") in DEPOTS:
+        st.session_state.depot_retour_key = meta["depot_retour_key"]
+    if meta.get("heure_min_depart"):
+        try:
+            st.session_state.heure_min_depart = datetime.datetime.strptime(
+                meta["heure_min_depart"], "%H:%M").time()
+        except ValueError:
+            pass
+    if as_copy:
+        # Modèle réutilisé : la date courante est conservée, l'original reste intact
+        nom = f"{t.get('nom', 'Tournée')} (copie)"
+        st.session_state.tournee_id         = None
+        st.session_state.tournee_saved_hash = None
+        st.session_state.tournee_saved_at   = None
+    else:
+        nom = t.get("nom") or ""
+        if t.get("tour_date"):
+            try:
+                st.session_state.tour_date = datetime.date.fromisoformat(t["tour_date"])
+            except ValueError:
+                pass
+        st.session_state.tournee_id = t["id"]
+        st.session_state.tournee_saved_hash = _tournee_hash(
+            _stops_records(st.session_state.df_stops), nom)
+        st.session_state.tournee_saved_at = t.get("updated_at")
+    st.session_state.tournee_nom = nom
+    st.session_state._pending_tournee_nom = nom
+    st.session_state.tournee_save_error = None
+    return True
+
+
+@st.dialog("📂 Tournées enregistrées", width="large")
+def dialog_tournees():
+    try:
+        tournees = STORE.list_tournees()
+    except StoreError as e:
+        st.error(f"❌ {e}")
+        return
+    st.session_state.tournees_count = len(tournees)
+    if not tournees:
+        st.info("Aucune tournée enregistrée pour le moment. Saisissez vos arrêts "
+                "puis cliquez sur **💾 Enregistrer** dans l'onglet Saisie.")
+        return
+    q = _norm_txt(st.text_input("🔎 Rechercher", placeholder="Nom, chauffeur, date…",
+                                key="dlg_tournees_q"))
+    st.caption("**✏️ Ouvrir** : reprend la tournée et enregistre vos modifications "
+               "dessus. **📑 Réutiliser** : en fait une copie de départ, l'original "
+               "reste intact. Le tableau de saisie actuel est remplacé.")
+    shown = 0
+    for t in tournees:
+        d = t.get("tour_date") or ""
+        try:
+            d_aff = datetime.date.fromisoformat(d).strftime("%d/%m/%Y") if d else "—"
+        except ValueError:
+            d_aff = d
+        texte = _norm_txt(f"{t.get('nom','')} {t.get('chauffeur','')} {d_aff}")
+        if q and q not in texte:
+            continue
+        shown += 1
+        is_open = t["id"] == st.session_state.tournee_id
+        with st.container(border=True):
+            c1, c2, c3, c4 = st.columns([3.4, 1.2, 1.4, 0.7], vertical_alignment="center")
+            c1.markdown(
+                f"**{t.get('nom') or 'Sans nom'}**"
+                + ("  ·  :green[ouverte]" if is_open else "") + "  \n"
+                f"📅 {d_aff} · 👤 {t.get('chauffeur') or '—'} · "
+                f"📍 {t.get('nb_arrets', 0)} arrêt(s)  \n"
+                f":gray[Modifiée le {_fmt_maj(t.get('updated_at'))}]")
+            if c2.button("✏️ Ouvrir", key=f"dlg_open_{t['id']}", type="primary",
+                         use_container_width=True):
+                if load_tournee(t["id"]):
+                    st.rerun()
+            if c3.button("📑 Réutiliser", key=f"dlg_copy_{t['id']}",
+                         use_container_width=True):
+                if load_tournee(t["id"], as_copy=True):
+                    st.rerun()
+            with c4.popover("🗑️", use_container_width=True):
+                st.markdown(f"Supprimer définitivement **{t.get('nom')}** ?")
+                if st.button("Supprimer", key=f"dlg_del_{t['id']}", type="primary"):
+                    try:
+                        STORE.delete_tournee(t["id"])
+                    except StoreError as e:
+                        st.error(f"❌ {e}")
+                    else:
+                        if is_open:
+                            st.session_state.tournee_id = None
+                            st.session_state.tournee_saved_hash = None
+                        st.session_state.pop("tournees_count", None)
+                        st.rerun(scope="fragment")
+    if shown == 0:
+        st.caption("Aucune tournée ne correspond à la recherche.")
+
+
+def tournees_count() -> int | None:
+    if "tournees_count" not in st.session_state:
+        try:
+            st.session_state.tournees_count = len(STORE.list_tournees())
+        except StoreError:
+            return None
+    return st.session_state.tournees_count
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEOCODAGE – API Adresse gouv.fr + fallback Nominatim
@@ -3301,6 +3683,15 @@ def export_pdf(result, tour_date, driver_name):
 with st.sidebar:
     st.markdown("## 🚛 Optimiseur de Tournées")
     st.caption("Assainissement · WC Chimiques")
+    if st.session_state.store_error:
+        st.error(f"☁️ **Erreur de sauvegarde** — {st.session_state.store_error}")
+    elif STORE.persistent:
+        st.caption("☁️ Données synchronisées avec **Supabase**")
+    else:
+        st.warning(
+            "☁️ **Supabase non configuré** : base client, tournées et stock ne sont "
+            "conservés que pendant cette session. Renseignez la section "
+            "`[supabase]` des secrets Streamlit (voir README).")
     st.divider()
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -3313,9 +3704,12 @@ with st.sidebar:
         type=["xlsx", "xlsm"],
         key="uploader_stock",
         help=(
-            "À importer **à chaque ouverture** de l'application : Streamlit ne "
-            "conserve aucune donnée entre deux sessions.\n\n"
-            "Le fichier doit contenir un onglet **Stock** avec les colonnes "
+            ("Le stock importé est **enregistré dans Supabase** et retrouvé "
+             "automatiquement à la prochaine ouverture.\n\n"
+             if STORE.persistent else
+             "À importer **à chaque ouverture** de l'application : Streamlit ne "
+             "conserve aucune donnée entre deux sessions.\n\n")
+            + "Le fichier doit contenir un onglet **Stock** avec les colonnes "
             "**Article**, **Couleur**, **Installés**, **En stock**. "
             "Le modèle téléchargeable depuis l'onglet *Stock & disponibilité* "
             "est directement réimportable."
@@ -3332,6 +3726,7 @@ with st.sidebar:
                 st.session_state.stock_import_ok    = True
                 st.session_state.stock_import_name  = up_stock.name
                 st.session_state.stock_last_file_id = file_id
+                persist_stock(df_imp)
                 st.success(f"✅ {msg}")
                 st.rerun()
             else:
@@ -3341,7 +3736,13 @@ with st.sidebar:
     _tot_stk = int(st.session_state.df_stock["En stock"].sum())
     _tot_ins = int(st.session_state.df_stock["Installés"].sum())
 
-    if st.session_state.stock_import_ok:
+    if STORE.persistent and st.session_state.stock_db_ok:
+        st.success(
+            f"☁️ **Stock enregistré dans Supabase**  \n"
+            f"{_nb_ref} référence(s) · {_tot_stk} en stock · {_tot_ins} installé(s)  \n"
+            f"Mis à jour le {_fmt_maj(st.session_state.stock_db_maj)}"
+        )
+    elif st.session_state.stock_import_ok:
         st.success(
             f"📥 **{st.session_state.stock_import_name}**  \n"
             f"{_nb_ref} référence(s) · {_tot_stk} en stock · {_tot_ins} installé(s)"
@@ -3539,8 +3940,9 @@ with st.sidebar:
 st.title("Optimisation Tournées WC chimiques - Deldossi Assainissement")
 st.caption(f"🏭 Départ : **{st.session_state.depot_depart_key}** · Retour : **{st.session_state.depot_retour_key}**")
 
-tab_saisie, tab_optim, tab_stock, tab_export = st.tabs([
+tab_saisie, tab_clients, tab_optim, tab_stock, tab_export = st.tabs([
     "📋  Saisie des arrêts",
+    "📇  Base client",
     "🗺️  Tournée optimisée",
     "📦  Stock & disponibilité",
     "📥  Export",
@@ -3592,6 +3994,56 @@ with tab_saisie:
         for idx in deleted:
             df = df.drop(index=idx).reset_index(drop=True)
         return _normalize_option(df)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BANDEAU — TOURNÉES ENREGISTRÉES (Supabase)
+    # ══════════════════════════════════════════════════════════════════════════
+    if "_pending_tournee_nom" in st.session_state:
+        st.session_state.tournee_nom_input = st.session_state.pop("_pending_tournee_nom")
+    elif "tournee_nom_input" not in st.session_state:
+        st.session_state.tournee_nom_input = st.session_state.tournee_nom
+
+    with st.container(border=True):
+        _tb1, _tb2, _tb3, _tb4 = st.columns([3.2, 1.4, 1.9, 1.1],
+                                            vertical_alignment="bottom")
+        with _tb1:
+            st.text_input(
+                "💾 Nom de la tournée", key="tournee_nom_input",
+                placeholder=_default_tournee_nom(),
+                help="Laissé vide, le nom est construit à partir de la date et du "
+                     "chauffeur.")
+        with _tb2:
+            _btn_save_lbl = ("💾 Mettre à jour" if st.session_state.tournee_id
+                             else "💾 Enregistrer")
+            if st.button(_btn_save_lbl, type="primary", use_container_width=True,
+                         help="Enregistre la tournée (arrêts, date, chauffeur, "
+                              "dépôts, heure de départ) dans la base. Elle reste "
+                              "modifiable et réutilisable."):
+                if save_tournee(_current_df(), st.session_state.tournee_nom_input):
+                    st.toast("✅ Tournée enregistrée", icon="💾")
+        with _tb3:
+            _nb_t = tournees_count()
+            if st.button("📂 Tournées enregistrées"
+                         + (f" ({_nb_t})" if _nb_t is not None else ""),
+                         use_container_width=True,
+                         help="Ouvrir, réutiliser ou supprimer une tournée enregistrée."):
+                dialog_tournees()
+        with _tb4:
+            if st.button("➕ Nouvelle", use_container_width=True,
+                         help="Ferme la tournée enregistrée et repart d'un tableau vide "
+                              "(la tournée enregistrée n'est pas modifiée)."):
+                st.session_state.df_stops = _init_df()
+                st.session_state.result   = None
+                reset_manual_order()
+                if "editor_stops" in st.session_state:
+                    del st.session_state["editor_stops"]
+                st.session_state.tournee_id         = None
+                st.session_state.tournee_saved_hash = None
+                st.session_state.tournee_saved_at   = None
+                st.session_state.tournee_nom        = ""
+                st.session_state._pending_tournee_nom = ""
+                st.rerun()
+        _tournee_status = st.empty()
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOC 1 — IMPORT DE LA TOURNÉE DEPUIS EXCEL
@@ -3646,6 +4098,8 @@ with tab_saisie:
                     _df_final = _df_imp
                 if "Couleur" not in _df_final.columns:
                     _df_final["Couleur"] = ""
+                _df_final = match_client_by_address(
+                    _df_final.reset_index(drop=True), client_points_index())
                 st.session_state.df_stops           = _df_final.reset_index(drop=True)
                 st.session_state.stops_last_file_id = _file_id_stops
                 st.session_state.stops_import_name  = up_stops.name
@@ -3741,17 +4195,39 @@ with tab_saisie:
         st.session_state.df_stops["Couleur"] = (
             st.session_state.df_stops["Couleur"].map(couleurs_arret_texte))
 
+        # Colonne « Client » (base client) : migration + options du menu
+        if "Client" not in st.session_state.df_stops.columns:
+            st.session_state.df_stops.insert(0, "Client", "")
+        st.session_state.df_stops["Client"] = (
+            st.session_state.df_stops["Client"].fillna("").astype(str))
+        _cp_index = client_points_index()
+        _client_opts = [""] + list(_cp_index.keys())
+        _client_opts += sorted(set(st.session_state.df_stops["Client"])
+                               - set(_client_opts))
+
         editor_df = st.session_state.df_stops.copy()
         editor_df["Couleur"] = editor_df["Couleur"].map(couleurs_arret).astype(object)
+
+        if not _cp_index:
+            st.caption("📇 La colonne **Client** propose les fiches de l'onglet "
+                       "**Base client** : créez-y vos clients pour remplir les "
+                       "lignes automatiquement.")
 
         st.data_editor(
             editor_df,
             use_container_width=True,
             num_rows="dynamic",
-            column_order=["Suppr", "Action", "Produit", "Option", "Couleur",
+            column_order=["Client", "Suppr", "Action", "Produit", "Option", "Couleur",
                           "Quantité", "Nom du client", "Adresse", "Durée (min)",
                           "Pas avant", "Pas après", "Observations"],
             column_config={
+                "Client": st.column_config.SelectboxColumn(
+                    "📇 Client", width="medium", options=_client_opts,
+                    help="Choisissez un client et son point de livraison dans la "
+                         "base : adresse, produit, option, quantité, couleurs, "
+                         "fenêtre d'intervention et observation sont remplis "
+                         "automatiquement (l'action reste à choisir). "
+                         "Les champs restent modifiables ensuite."),
                 "Suppr": st.column_config.CheckboxColumn(
                     "🗑️", width="small", default=False,
                     help="Cochez les lignes à supprimer, puis cliquez sur "
@@ -3801,6 +4277,32 @@ with tab_saisie:
             key="editor_stops",
         )
         # df_stops n'est réécrit que par _flush_editor() lors d'une action.
+
+        # ── Remplissage automatique à la sélection d'un client ────────────────
+        # Exception à la règle ci-dessus : choisir un client dans la colonne
+        # « Client » applique immédiatement les éditions puis complète la ligne.
+        _es = st.session_state.get("editor_stops") or {}
+        _cl_edits = {int(i): c.get("Client")
+                     for i, c in (_es.get("edited_rows") or {}).items()
+                     if "Client" in c}
+        _cl_adds = [(j, r.get("Client"))
+                    for j, r in enumerate(_es.get("added_rows") or [])
+                    if r.get("Client")]
+        if _cl_edits or _cl_adds:
+            _n_base  = len(st.session_state.df_stops)
+            _deleted = sorted(int(d) for d in (_es.get("deleted_rows") or []))
+            _flush_editor()
+            _df_fill = st.session_state.df_stops
+            _targets = [(i, lab) for i, lab in _cl_edits.items() if i not in _deleted]
+            _targets += [(_n_base + j, lab) for j, lab in _cl_adds]
+            for _i, _lab in _targets:
+                _i_new = _i - sum(1 for d in _deleted if d < _i)
+                if _lab and 0 <= _i_new < len(_df_fill):
+                    autofill_from_client(_df_fill, _i_new, _lab, _cp_index)
+            _df_fill["Client"] = _df_fill["Client"].fillna("").astype(str)
+            st.session_state.df_stops = _df_fill
+            del st.session_state["editor_stops"]
+            st.rerun()
 
         live_df    = _current_df()
         valid_rows = live_df[live_df["Adresse"].fillna("").str.strip() != ""]
@@ -3879,6 +4381,7 @@ with tab_saisie:
         if st.button("➕ Ajouter un arrêt", use_container_width=True):
             _flush_editor()
             new_row = pd.DataFrame({
+                "Client": [""],
                 "Suppr": [False],
                 "Action": ["Nettoyer"], "Produit": ["WC chimique"],
                 "Option": ["Lave-main"], "Couleur": [""], "Quantité": [1],
@@ -3940,6 +4443,40 @@ with tab_saisie:
         if sel_count == 0:
             st.caption("Cochez la colonne 🗑️ dans le tableau pour sélectionner "
                        "des lignes à supprimer.")
+
+    # ── Sauvegarde automatique de la tournée ouverte + bandeau d'état ─────────
+    if st.session_state.tournee_id and st.session_state.tournee_autosave:
+        _nom_courant = (str(st.session_state.tournee_nom_input or "").strip()
+                        or st.session_state.tournee_nom or _default_tournee_nom())
+        _h = _tournee_hash(_stops_records(live_df), _nom_courant)
+        if _h != st.session_state.tournee_saved_hash:
+            save_tournee(live_df, _nom_courant)
+
+    with _tournee_status.container():
+        if st.session_state.tournee_save_error:
+            st.error(f"❌ Enregistrement impossible : "
+                     f"{st.session_state.tournee_save_error}")
+        if st.session_state.tournee_id:
+            _s1, _s2 = st.columns([3, 1.4], vertical_alignment="center")
+            _s1.caption(
+                f"✏️ Tournée ouverte : **{st.session_state.tournee_nom}** · "
+                f"☁️ enregistrée le {_fmt_maj(st.session_state.tournee_saved_at)}"
+                + ("" if st.session_state.tournee_autosave
+                   else " · :orange[modifications non enregistrées automatiquement]"))
+            # Pas de « key » : l'état de session d'un widget non affiché est
+            # purgé par Streamlit, ce qui désactivait la sauvegarde automatique.
+            st.session_state.tournee_autosave = _s2.toggle(
+                       "Sauvegarde automatique",
+                       value=bool(st.session_state.tournee_autosave),
+                       help="Chaque modification du tableau, de la date ou du "
+                            "chauffeur est enregistrée sur cette tournée.")
+        else:
+            st.caption("📝 Tournée non enregistrée. Cliquez sur **💾 Enregistrer** "
+                       "pour la retrouver lors d'une prochaine session"
+                       + (" ; elle sera ensuite sauvegardée automatiquement."
+                          if STORE.persistent else
+                          " (Supabase non configuré : conservée pour cette "
+                          "session uniquement)."))
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOC 3 — PRÉCALCUL DES DURÉES
@@ -4303,6 +4840,354 @@ with tab_saisie:
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ONGLET — BASE CLIENT (hub : liste à gauche, fiche à droite)
+# ══════════════════════════════════════════════════════════════════════════════
+# Une fiche = un client, avec sa prestation habituelle et sa fenêtre
+# d'intervention par défaut, et N points de livraison (adresse, fenêtre
+# spécifique facultative, observation). Le brouillon de la fiche ouverte vit
+# dans st.session_state sous des clés « bc_<nonce>_… » : changer de fiche
+# incrémente le nonce, ce qui réinitialise proprement tous les champs.
+
+import uuid as _uuid
+
+
+def _bc_time(value):
+    try:
+        return datetime.datetime.strptime(str(value).strip(), "%H:%M").time()
+    except (ValueError, TypeError):
+        return None
+
+
+def _bc_hhmm(value) -> str:
+    return value.strftime("%H:%M") if isinstance(value, datetime.time) else ""
+
+
+def _bc_key(name: str) -> str:
+    return f"bc_{st.session_state.get('bc_nonce', 0)}_{name}"
+
+
+def _bc_add_point(point: dict | None = None) -> None:
+    p = point or {}
+    uid = _uuid.uuid4().hex[:10]
+    st.session_state.bc_points.append({"uid": uid, "id": p.get("id")})
+    st.session_state[_bc_key(f"pt_{uid}_libelle")]   = p.get("libelle", "") or ""
+    st.session_state[_bc_key(f"pt_{uid}_adresse")]   = p.get("adresse", "") or ""
+    st.session_state[_bc_key(f"pt_{uid}_pas_avant")] = _bc_time(p.get("pas_avant"))
+    st.session_state[_bc_key(f"pt_{uid}_pas_apres")] = _bc_time(p.get("pas_apres"))
+    st.session_state[_bc_key(f"pt_{uid}_obs")]       = p.get("observations", "") or ""
+
+
+def _bc_remove_point(uid: str) -> None:
+    st.session_state.bc_points = [p for p in st.session_state.bc_points
+                                  if p["uid"] != uid]
+
+
+def _bc_open(client: dict | None) -> None:
+    """Ouvre une fiche (client=None → nouvelle fiche vierge)."""
+    ss = st.session_state
+    ss.bc_nonce = ss.get("bc_nonce", 0) + 1
+    c = client or {}
+    ss.bc_selected = c.get("id") or "__new__"
+    produit = c.get("produit") or "WC chimique"
+    ss[_bc_key("nom")]       = c.get("nom", "") or ""
+    ss[_bc_key("contact")]   = c.get("contact", "") or ""
+    ss[_bc_key("telephone")] = c.get("telephone", "") or ""
+    ss[_bc_key("email")]     = c.get("email", "") or ""
+    ss[_bc_key("notes")]     = c.get("notes", "") or ""
+    ss[_bc_key("produit")]   = produit if produit in PRODUITS_CATALOGUE else "WC chimique"
+    ss[_bc_key("option")]    = (c.get("option_produit") or "") if client else "Lave-main"
+    ss[_bc_key("quantite")]  = int(c.get("quantite") or 1)
+    ss[_bc_key("couleurs")]  = couleurs_arret(c.get("couleurs") or "")
+    ss[_bc_key("pas_avant")] = _bc_time(c.get("pas_avant"))
+    ss[_bc_key("pas_apres")] = _bc_time(c.get("pas_apres"))
+    ss.bc_points = []
+    for p in (c.get("points") or [{}]):
+        _bc_add_point(p)
+
+
+def _bc_close() -> None:
+    st.session_state.bc_selected = None
+
+
+def _bc_collect():
+    """Lit le brouillon et retourne (client, points, erreurs)."""
+    ss = st.session_state
+    erreurs = []
+    produit = ss[_bc_key("produit")]
+    client = {
+        "id":             None if ss.bc_selected == "__new__" else ss.bc_selected,
+        "nom":            str(ss[_bc_key("nom")]).strip(),
+        "contact":        str(ss[_bc_key("contact")]).strip(),
+        "telephone":      str(ss[_bc_key("telephone")]).strip(),
+        "email":          str(ss[_bc_key("email")]).strip(),
+        "notes":          str(ss[_bc_key("notes")]).strip(),
+        "produit":        produit,
+        "option_produit": (ss[_bc_key("option")] or "") if produit == "WC chimique" else "",
+        "quantite":       int(ss[_bc_key("quantite")] or 1),
+        "couleurs":       couleurs_arret_texte(ss[_bc_key("couleurs")]),
+        "pas_avant":      _bc_hhmm(ss[_bc_key("pas_avant")]),
+        "pas_apres":      _bc_hhmm(ss[_bc_key("pas_apres")]),
+    }
+    if not client["nom"]:
+        erreurs.append("Le **nom du client** est obligatoire.")
+    if client["pas_avant"] and client["pas_apres"] and client["pas_avant"] >= client["pas_apres"]:
+        erreurs.append("Fenêtre par défaut : « Pas avant » doit précéder « Pas après ».")
+    points = []
+    for i, p in enumerate(ss.bc_points, 1):
+        uid = p["uid"]
+        pt = {
+            "id":           p.get("id"),
+            "libelle":      str(ss[_bc_key(f"pt_{uid}_libelle")]).strip(),
+            "adresse":      str(ss[_bc_key(f"pt_{uid}_adresse")]).strip(),
+            "pas_avant":    _bc_hhmm(ss[_bc_key(f"pt_{uid}_pas_avant")]),
+            "pas_apres":    _bc_hhmm(ss[_bc_key(f"pt_{uid}_pas_apres")]),
+            "observations": str(ss[_bc_key(f"pt_{uid}_obs")]).strip(),
+        }
+        if not any([pt["libelle"], pt["adresse"], pt["pas_avant"],
+                    pt["pas_apres"], pt["observations"]]):
+            continue   # point laissé vide : ignoré
+        if not pt["adresse"]:
+            erreurs.append(f"Point de livraison n°{i} : l'**adresse** est obligatoire.")
+        if pt["pas_avant"] and pt["pas_apres"] and pt["pas_avant"] >= pt["pas_apres"]:
+            erreurs.append(f"Point de livraison n°{i} : « Pas avant » doit précéder "
+                           "« Pas après ».")
+        points.append(pt)
+    if not points:
+        erreurs.append("Renseignez au moins **un point de livraison** (adresse).")
+    return client, points, erreurs
+
+
+if "bc_selected" not in st.session_state:
+    st.session_state.bc_selected = None
+if "bc_points" not in st.session_state:
+    st.session_state.bc_points = []
+
+with tab_clients:
+    _clients = st.session_state.get("clients_db", [])
+    _nb_pts  = sum(len(c.get("points", [])) for c in _clients)
+
+    _h1, _h2, _h3, _h4 = st.columns([2.2, 1, 1, 1.2], vertical_alignment="bottom")
+    with _h1:
+        st.markdown("### 📇 Base client")
+        st.caption("Fiches clients réutilisées par la colonne **Client** du tableau "
+                   "de saisie des arrêts.")
+    _h2.metric("Clients", len(_clients))
+    _h3.metric("Points de livraison", _nb_pts)
+    with _h4:
+        st.button("➕ Nouveau client", type="primary", use_container_width=True,
+                  on_click=_bc_open, args=(None,))
+        if st.button("🔄 Actualiser", use_container_width=True,
+                     help="Recharge la base (modifications faites par un collègue)."):
+            refresh_clients()
+            st.rerun()
+
+    if not STORE.persistent:
+        st.warning("☁️ Supabase n'est pas configuré : les fiches ne seront conservées "
+                   "que pendant cette session.")
+
+    col_list, col_hub = st.columns([1.15, 2.6], gap="large")
+
+    # ── Liste des clients ─────────────────────────────────────────────────────
+    with col_list:
+        _q = _norm_txt(st.text_input("🔎 Rechercher", key="bc_search",
+                                     placeholder="Nom, ville, adresse…"))
+        _filtres = [
+            c for c in _clients
+            if not _q or _q in _norm_txt(" ".join(
+                [c.get("nom", ""), c.get("contact", "")]
+                + [f"{p.get('libelle','')} {p.get('adresse','')}"
+                   for p in c.get("points", [])]))
+        ]
+        with st.container(height=560, border=False):
+            if not _clients:
+                st.info("Aucun client pour le moment.  \nCliquez sur "
+                        "**➕ Nouveau client** pour créer la première fiche.")
+            elif not _filtres:
+                st.caption("Aucun client ne correspond à la recherche.")
+            for _c in _filtres:
+                _n = len(_c.get("points", []))
+                _opt = f" + {_c['option_produit']}" if _c.get("option_produit") else ""
+                st.button(
+                    f"**{_c.get('nom','')}**  \n"
+                    f"{_c.get('produit','')}{_opt} · {_n} point{'s' if _n > 1 else ''}",
+                    key=f"bc_item_{_c['id']}", use_container_width=True,
+                    type="primary" if st.session_state.bc_selected == _c["id"] else "secondary",
+                    on_click=_bc_open, args=(_c,))
+
+    # ── Fiche (hub) ───────────────────────────────────────────────────────────
+    with col_hub:
+        _sel = st.session_state.bc_selected
+        if _sel is None or _bc_key("nom") not in st.session_state:
+            with st.container(border=True):
+                st.markdown("#### 👈 Sélectionnez un client")
+                st.markdown(
+                    "Chaque fiche regroupe :\n"
+                    "1. **Identité** — nom, contact, téléphone\n"
+                    "2. **Prestation habituelle** — produit, option, quantité, "
+                    "couleurs et fenêtre d'intervention par défaut\n"
+                    "3. **Points de livraison** — une ou plusieurs adresses, chacune "
+                    "avec sa fenêtre spécifique et son observation\n\n"
+                    "Dans **📋 Saisie des arrêts**, choisissez le client dans la "
+                    "première colonne : la ligne se remplit toute seule.")
+        else:
+            _is_new = _sel == "__new__"
+            _titre = st.session_state[_bc_key("nom")] or "Nouveau client"
+            st.markdown(f"#### {'🆕' if _is_new else '🏢'} {_titre}")
+
+            # ① Identité
+            with st.container(border=True):
+                st.markdown("**① Identité**")
+                _a, _b = st.columns(2)
+                _a.text_input("Nom du client *", key=_bc_key("nom"),
+                              placeholder="ex : SARL Martin BTP")
+                _b.text_input("Contact sur place", key=_bc_key("contact"),
+                              placeholder="ex : M. Durand")
+                _a.text_input("📞 Téléphone", key=_bc_key("telephone"))
+                _b.text_input("✉️ E-mail", key=_bc_key("email"))
+                st.text_area("Notes internes", key=_bc_key("notes"), height=68,
+                             placeholder="Facturation, particularités du client… "
+                                         "(non reprises dans la tournée)")
+
+            # ② Prestation habituelle
+            with st.container(border=True):
+                st.markdown("**② Prestation habituelle**")
+                st.caption("Reprise automatiquement à chaque sélection du client "
+                           "dans le tableau de saisie (modifiable ligne par ligne).")
+                _p1, _p2, _p3 = st.columns([1.4, 1.4, 0.8])
+                _p1.selectbox("Produit", PRODUITS_CATALOGUE, key=_bc_key("produit"))
+                _is_wc = st.session_state[_bc_key("produit")] == "WC chimique"
+                _p2.selectbox("Option", ["", "Lave-main", "Urinoir"],
+                              key=_bc_key("option"), disabled=not _is_wc,
+                              format_func=lambda x: x or "— Aucune —",
+                              help="Réservée au WC chimique.")
+                _p3.number_input("Quantité", min_value=1, max_value=20, step=1,
+                                 key=_bc_key("quantite"))
+                st.multiselect("🎨 Couleurs acceptées", COULEURS_PRODUITS,
+                               key=_bc_key("couleurs"),
+                               placeholder="Toutes couleurs")
+                if _is_wc and not st.session_state[_bc_key("option")]:
+                    st.warning("🚽 Un WC chimique doit être accompagné d'un "
+                               "**Lave-main** ou d'un **Urinoir** (art. R4228-7).")
+                st.markdown("**⏰ Fenêtre d'intervention par défaut**")
+                _f1, _f2, _f3 = st.columns([1, 1, 1.6], vertical_alignment="bottom")
+                _f1.time_input("Pas avant", key=_bc_key("pas_avant"), step=300)
+                _f2.time_input("Pas après", key=_bc_key("pas_apres"), step=300)
+                _f3.caption("S'applique à tous les points de livraison, sauf s'ils "
+                            "ont leur propre fenêtre. Laisser vide = aucune contrainte.")
+
+            # ③ Points de livraison
+            with st.container(border=True):
+                _pts = st.session_state.bc_points
+                st.markdown(f"**③ Points de livraison ({len(_pts)})**")
+                st.caption("Un même client peut être livré à plusieurs adresses "
+                           "(chantiers, sites, événements). Chaque point apparaît "
+                           "séparément dans la colonne Client de la saisie.")
+                _def_av = _bc_hhmm(st.session_state[_bc_key("pas_avant")])
+                _def_ap = _bc_hhmm(st.session_state[_bc_key("pas_apres")])
+                for _i, _p in enumerate(_pts, 1):
+                    _u = _p["uid"]
+                    with st.container(border=True):
+                        _r1, _r2, _r3 = st.columns([1.3, 2.7, 0.45],
+                                                   vertical_alignment="bottom")
+                        _r1.text_input(f"Point n°{_i} — libellé",
+                                       key=_bc_key(f"pt_{_u}_libelle"),
+                                       placeholder="ex : Chantier Gaillac")
+                        _r2.text_input("📍 Adresse complète *",
+                                       key=_bc_key(f"pt_{_u}_adresse"),
+                                       placeholder="ex : Place d'Hautpoul 81600 Gaillac")
+                        _r3.button("🗑️", key=_bc_key(f"pt_{_u}_del"),
+                                   help="Retirer ce point de livraison",
+                                   disabled=len(_pts) <= 1,
+                                   on_click=_bc_remove_point, args=(_u,))
+                        _r4, _r5, _r6 = st.columns([0.85, 0.85, 2.75])
+                        _r4.time_input("Pas avant", key=_bc_key(f"pt_{_u}_pas_avant"),
+                                       step=300,
+                                       help=f"Vide = fenêtre du client "
+                                            f"({_def_av or 'aucune'}).")
+                        _r5.time_input("Pas après", key=_bc_key(f"pt_{_u}_pas_apres"),
+                                       step=300,
+                                       help=f"Vide = fenêtre du client "
+                                            f"({_def_ap or 'aucune'}).")
+                        _r6.text_input("📝 Observation",
+                                       key=_bc_key(f"pt_{_u}_obs"),
+                                       placeholder="Code portail, accès, contact…")
+                        _addr = str(st.session_state[_bc_key(f"pt_{_u}_adresse")]).strip()
+                        _geo_k = _bc_key(f"pt_{_u}_geo")
+                        _g1, _g2 = st.columns([1, 3], vertical_alignment="center")
+                        if _g1.button("📍 Vérifier l'adresse", key=_bc_key(f"pt_{_u}_chk"),
+                                      disabled=not _addr):
+                            with st.spinner("Géocodage…"):
+                                st.session_state[_geo_k] = (_addr, geocode(_addr))
+                        _geo = st.session_state.get(_geo_k)
+                        if _geo and _geo[0] == _addr:
+                            if _geo[1]:
+                                _g2.caption(f"✅ Adresse localisée "
+                                            f"({_geo[1][0]:.5f}, {_geo[1][1]:.5f})")
+                            else:
+                                _g2.caption(":red[⚠️ Adresse introuvable : précisez la "
+                                            "rue, le code postal et la ville.]")
+                st.button("➕ Ajouter un point de livraison", use_container_width=True,
+                          on_click=_bc_add_point)
+
+            # Actions
+            _e1, _e2, _e3 = st.columns([1.6, 1, 1])
+            if _e1.button("💾 Enregistrer la fiche", type="primary",
+                          use_container_width=True):
+                _client, _points, _err = _bc_collect()
+                if _err:
+                    st.error("  \n".join(f"• {e}" for e in _err))
+                else:
+                    try:
+                        _cid = STORE.save_client(_client, _points)
+                    except StoreError as e:
+                        st.error(f"❌ {e}")
+                    else:
+                        refresh_clients()
+                        _saved = next((c for c in st.session_state.clients_db
+                                       if c["id"] == _cid), None)
+                        _bc_open(_saved) if _saved else _bc_close()
+                        st.toast(f"✅ Fiche « {_client['nom']} » enregistrée", icon="📇")
+                        st.rerun()
+            _e2.button("✖ Fermer" if not _is_new else "✖ Annuler",
+                       use_container_width=True, on_click=_bc_close,
+                       help="Ferme la fiche sans enregistrer les modifications.")
+            if not _is_new:
+                with _e3.popover("🗑️ Supprimer", use_container_width=True):
+                    st.markdown(f"Supprimer définitivement **{_titre}** et ses "
+                                f"{len(_pts)} point(s) de livraison ?")
+                    st.caption("Les tournées déjà saisies ne sont pas modifiées.")
+                    if st.button("Confirmer la suppression", type="primary",
+                                 key="bc_confirm_del"):
+                        try:
+                            STORE.delete_client(_sel)
+                        except StoreError as e:
+                            st.error(f"❌ {e}")
+                        else:
+                            refresh_clients()
+                            _bc_close()
+                            st.rerun()
+
+    # ── Vue d'ensemble ───────────────────────────────────────────────────────
+    if _clients:
+        with st.expander(f"📋 Tous les points de livraison ({_nb_pts})"):
+            _rows = []
+            for _c in _clients:
+                for _p in _c.get("points", []):
+                    _rows.append({
+                        "Client":      _c.get("nom", ""),
+                        "Point":       _p.get("libelle", ""),
+                        "Adresse":     _p.get("adresse", ""),
+                        "Produit":     _c.get("produit", "") + (
+                            f" + {_c['option_produit']}" if _c.get("option_produit") else ""),
+                        "Qté":         _c.get("quantite", 1),
+                        "Couleurs":    _c.get("couleurs", ""),
+                        "Pas avant":   _p.get("pas_avant") or _c.get("pas_avant") or "",
+                        "Pas après":   _p.get("pas_apres") or _c.get("pas_apres") or "",
+                        "Observation": _p.get("observations", ""),
+                    })
+            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ONGLET 2 — RÉSULTATS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -4624,7 +5509,14 @@ with tab_stock:
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown("### 1\ufe0f\u20e3  Source des données")
 
-    if st.session_state.stock_import_ok:
+    if STORE.persistent and st.session_state.stock_db_ok:
+        st.success(
+            f"☁️ Stock **enregistré dans Supabase** (dernière mise à jour : "
+            f"{_fmt_maj(st.session_state.stock_db_maj)}). Chaque import ou "
+            f"modification est sauvegardé automatiquement et retrouvé à la "
+            f"prochaine ouverture."
+        )
+    elif st.session_state.stock_import_ok:
         st.success(
             f"📥 Données issues du fichier **{st.session_state.stock_import_name}**, "
             f"importé dans cette session."
@@ -4662,10 +5554,17 @@ with tab_stock:
             use_container_width=True,
             help="Structure attendue à l'import : Article · Couleur · Installés · En stock.")
     with col_dl3:
-        if st.button("♻️ Restaurer le relevé de référence",
-                     use_container_width=True,
-                     help="Revient aux valeurs du relevé transmis par l'exploitation."):
+        _pop_restore = st.popover("♻️ Restaurer le relevé de référence",
+                                  use_container_width=True,
+                                  help="Revient aux valeurs du relevé transmis par "
+                                       "l'exploitation.")
+        _pop_restore.warning("Le stock actuel sera **remplacé** par le relevé de "
+                             "référence" + (" et enregistré dans Supabase."
+                                            if STORE.persistent else "."))
+        if _pop_restore.button("Confirmer la restauration", type="primary",
+                               use_container_width=True):
             st.session_state.df_stock          = _stock_default_df()
+            persist_stock(st.session_state.df_stock)
             st.session_state.stock_import_ok   = False
             st.session_state.stock_import_name = None
             st.session_state.stock_source      = "Valeurs de référence (relevé exploitation)"
@@ -4755,8 +5654,10 @@ with tab_stock:
     st.markdown("### 4\ufe0f\u20e3  Détail modifiable")
     st.caption(
         "Ajustez directement les quantités si le relevé a évolué depuis l'import. "
-        "Les modifications ne sont conservées que le temps de la session : "
-        "exportez le fichier après correction (bloc 1)."
+        + ("Les modifications validées sont **enregistrées dans Supabase**."
+           if STORE.persistent else
+           "Les modifications ne sont conservées que le temps de la session : "
+           "exportez le fichier après correction (bloc 1).")
     )
 
     _detail = df_stock.copy()
@@ -4793,6 +5694,7 @@ with tab_stock:
             st.session_state.df_stock = _clean_stock_df(
                 _edit.drop(columns=[c for c in ("Parc total",) if c in _edit.columns]))
             st.session_state.stock_source = "Saisie manuelle dans l'application"
+            persist_stock(st.session_state.df_stock)
             del st.session_state["editor_stock"]
             st.rerun()
     with c_info:
@@ -4914,9 +5816,13 @@ with tab_stock:
             "sans multiplier la quantité demandée. Sans sélection, elle est contrôlée "
             "toutes couleurs confondues pour l'article concerné.\n\n"
             "**Persistance**  \n"
-            "Streamlit ne conserve aucune donnée entre deux sessions. Le cycle de "
-            "travail est : *importer le fichier au démarrage → travailler → exporter "
-            "le fichier mis à jour en fin de journée*."
+            + ("Le stock est enregistré dans **Supabase** à chaque import ou "
+               "modification validée, et rechargé automatiquement à l'ouverture. "
+               "L'export Excel reste disponible comme sauvegarde."
+               if STORE.persistent else
+               "Streamlit ne conserve aucune donnée entre deux sessions. Le cycle de "
+               "travail est : *importer le fichier au démarrage → travailler → exporter "
+               "le fichier mis à jour en fin de journée*.")
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
