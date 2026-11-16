@@ -1,16 +1,16 @@
 // Écran « Préparer » : tournée enregistrée, paramètres, arrêts (cartes sur mobile,
 // lignes compactes sur grand écran), contrôles, et barre « Optimiser » toujours visible.
 
-import { icon } from "./icons.js?v=202611162100";
+import { icon } from "./icons.js?v=202611162108";
 import { DEPOTS, PRODUITS_CATALOGUE, COULEURS_PRODUITS, ACTION_COLORS, PASTILLE, esc, normTxt, couleursArret,
-  couleursTexte, fmtDateHeure, toast, confirmer, fmtDate, ouvrirDialog, closeDialog, withBusy, geocode, geoConnu, confettis } from "./util.js?v=202611162100";
+  couleursTexte, fmtDateHeure, toast, confirmer, fmtDate, ouvrirDialog, closeDialog, withBusy, geocode, geoConnu, confettis } from "./util.js?v=202611162108";
 import { ACTIONS_CATALOGUE, BAREME_PRODUITS, BAREME_ACTIONS, baremeDefaut, besoinsTournee, controleDisponibilite,
-  besoinsRecords, nouvelArret, normaliserArret, parseHhmm, PAUSE_DEJEUNER_MIN } from "./metier.js?v=202611162100";
+  besoinsRecords, nouvelArret, normaliserArret, parseHhmm, PAUSE_DEJEUNER_MIN } from "./metier.js?v=202611162108";
 import { S, on, emit, stopsVides, stopsValides, dureeAuto, saveTournee, loadTournee, nouvelleTournee, nomParDefaut,
-  saveBareme, hashStops, resultatObsolete, appliquerParamsResultat, stopsEffectifs, instantane, restaurer } from "./state.js?v=202611162100";
-import { exportStopsExcel, parseStopsExcel } from "./xlsx.js?v=202611162100";
-import { telecharger, XLSX_MIME, loadExcel } from "./libs.js?v=202611162100";
-import { optimiser, pointe } from "./optim.js?v=202611162100";
+  saveBareme, hashStops, resultatObsolete, appliquerParamsResultat, stopsEffectifs, instantane, restaurer } from "./state.js?v=202611162108";
+import { exportStopsExcel, parseStopsExcel } from "./xlsx.js?v=202611162108";
+import { telecharger, XLSX_MIME, loadExcel } from "./libs.js?v=202611162108";
+import { optimiser, pointe } from "./optim.js?v=202611162108";
 
 export function initSaisie(root, ctx) {
   let detailsTous = false;
@@ -627,7 +627,7 @@ export function initSaisie(root, ctx) {
     const body = dlg.querySelector(".dlg-body");
     const seg = dlg.querySelector(".seg");
     let periode = "30", liste = [];
-    const { moveInk } = await import("./util.js?v=202611162100");
+    const { moveInk } = await import("./util.js?v=202611162108");
     const dessiner = () => {
       const q = normTxt(dlg.querySelector("input[type=search]").value);
       const lim = Date.now() - 30 * 864e5;

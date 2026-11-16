@@ -1,13 +1,13 @@
 // Point d'entrée : connexion, chargement des données (cache local puis réseau),
 // navigation avec transitions, pastille de contexte, assistance.
 
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611162100";
-import { SupabaseStore, DemoStore } from "./store.js?v=202611162100";
-import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611162100";
-import { icon } from "./icons.js?v=202611162100";
-import { logoHtml } from "./logo.js?v=202611162100";
-import { S, on, initState, resultatObsolete } from "./state.js?v=202611162100";
-import { ouvrirTicket } from "./ticket.js?v=202611162100";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611162108";
+import { SupabaseStore, DemoStore } from "./store.js?v=202611162108";
+import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611162108";
+import { icon } from "./icons.js?v=202611162108";
+import { logoHtml } from "./logo.js?v=202611162108";
+import { S, on, initState, resultatObsolete } from "./state.js?v=202611162108";
+import { ouvrirTicket } from "./ticket.js?v=202611162108";
 
 const $ = (s) => document.querySelector(s);
 // « ?demo » dans l'adresse force le mode démo (données fictives locales).
@@ -62,8 +62,15 @@ function route() {
     currentView = view;
     views[view]?.show?.(arg);
   };
-  if (document.startViewTransition && !reduceMotion() && currentView && currentView !== view) document.startViewTransition(apply);
-  else apply();
+  const change = currentView && currentView !== view;
+  apply();
+  if (change && !reduceMotion()) {
+    const sec = $(`#view-${view}`);
+    document.querySelectorAll(".view.entering").forEach((s) => s.classList.remove("entering"));
+    sec.classList.add("entering");
+    clearTimeout(route.t);
+    route.t = setTimeout(() => sec.classList.remove("entering"), 600);
+  }
 }
 addEventListener("hashchange", route);
 addEventListener("resize", () => moveInk($(".topnav"), $(".topnav a[aria-current]")));
@@ -91,7 +98,7 @@ async function startApp(email) {
   try { cached = JSON.parse(localStorage.getItem(ctx.cacheKey()) || "null"); } catch { /* cache illisible */ }
   if (cached) ctx.clients = cached;
   const [mods] = await Promise.all([
-    Promise.all([import("./accueil.js?v=202611162100"), import("./saisie.js?v=202611162100"), import("./tournee.js?v=202611162100"), import("./clients.js?v=202611162100"), import("./stock.js?v=202611162100")]),
+    Promise.all([import("./accueil.js?v=202611162108"), import("./saisie.js?v=202611162108"), import("./tournee.js?v=202611162108"), import("./clients.js?v=202611162108"), import("./stock.js?v=202611162108")]),
     initState(ctx.store),
     cached ? null : ctx.refreshClients(),
   ]);

@@ -1,8 +1,8 @@
 // Accueil : reprise de la tournée en cours, progression, chiffres du mois, raccourcis.
 
-import { icon } from "./icons.js?v=202611162100";
-import { esc, fmtDate, toast } from "./util.js?v=202611162100";
-import { S, on, stopsValides, resultatObsolete, loadTournee } from "./state.js?v=202611162100";
+import { icon } from "./icons.js?v=202611162108";
+import { esc, fmtDate, toast } from "./util.js?v=202611162108";
+import { S, on, stopsValides, resultatObsolete, loadTournee } from "./state.js?v=202611162108";
 
 export function initAccueil(root, ctx) {
   let tournees = null;
@@ -130,7 +130,10 @@ export function initAccueil(root, ctx) {
   });
 
   async function charger() {
-    try { tournees = await ctx.store.listTournees(); } catch { tournees = []; }
+    let liste;
+    try { liste = await ctx.store.listTournees(); } catch { liste = []; }
+    if (JSON.stringify(liste) === JSON.stringify(tournees)) return;   // rien de neuf : pas de re-rendu pendant l'animation
+    tournees = liste;
     if (!root.hidden) render();
   }
   ["tournee", "result", "stock"].forEach((ev) => on(ev, () => { if (!root.hidden) render(); }));
