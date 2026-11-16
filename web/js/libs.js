@@ -29,6 +29,20 @@ export const loadExcel = () => load("exceljs").then(() => window.ExcelJS);
 export const loadPdf = () => load("jspdf").then(() => window.jspdf.jsPDF);
 export const loadSortable = () => load("sortable").then(() => window.Sortable);
 
+let leafletP = null;
+/** Leaflet (carte) chargé seulement quand un écran avec carte s'ouvre. */
+export function loadLeaflet() {
+  if (!leafletP) {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(css);
+    leafletP = script("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js").then(() => window.L)
+      .catch((e) => { leafletP = null; throw e; });
+  }
+  return leafletP;
+}
+
 /** Propose le téléchargement d'un fichier généré dans le navigateur. */
 export function telecharger(data, nom, type) {
   const blob = data instanceof Blob ? data : new Blob([data], { type });

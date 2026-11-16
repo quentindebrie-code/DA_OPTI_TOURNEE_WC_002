@@ -2,70 +2,85 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Optimiseur de Tournées</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚚</text></svg>">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/app.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0A6D25">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Tournées · Deldossi Assainissement</title>
+  <link rel="icon" href="assets/logo-deldossi-vert.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://owpsojjsfwmfkqymfdiu.supabase.co" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="css/app.css?v=202611161929">
+  <link rel="modulepreload" href="js/app.js?v=202611161929">
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm">
 </head>
-<body>
-  <!-- ── Connexion ──────────────────────────────────────────────────────── -->
+<body data-view="accueil">
+  <div class="aqua" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <div id="boot" class="boot" role="status" aria-label="Chargement">
+    <div class="boot-inner"><svg class="logo-svg" role="img" aria-label="Deldossi Assainissement" viewBox="0 0 3272 678" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;"><g><path d="M131.335,41.081c67.121,-36.906 145.663,-47.233 220.043,-28.93c98.795,24.423 245.724,97.839 261.052,318.368c22.497,323.689 -425.084,486.752 -540.586,195.817c-9.409,-23.579 -14.856,-48.552 -16.121,-73.907c-2.653,-52.291 6.02,-142.24 86.36,-193.098c118.065,-74.74 118.348,-6.411 119.494,0l0,233.903c-0,0 93.819,8.839 168.423,-79.628c32.643,-38.63 46.52,-89.724 37.904,-139.56c-8.616,-49.836 -38.843,-93.305 -82.561,-118.732c-19.13,-11.079 -42.297,-20.143 -70.325,-26.146c-39.927,-8.497 -81.532,-3.828 -118.583,13.306c-31.866,14.726 -67.576,39.121 -87.403,78.721c-41.491,82.871 -135.931,11.376 -101.697,-50.848c22.591,-41.061 57.614,-92.682 124.001,-129.265Z" style="fill:url(#bt_Linear1);"/><clipPath id="bt_clip2"><path d="M131.335,41.081c67.121,-36.906 145.663,-47.233 220.043,-28.93c98.795,24.423 245.724,97.839 261.052,318.368c22.497,323.689 -425.084,486.752 -540.586,195.817c-9.409,-23.579 -14.856,-48.552 -16.121,-73.907c-2.653,-52.291 6.02,-142.24 86.36,-193.098c118.065,-74.74 118.348,-6.411 119.494,0l0,233.903c-0,0 93.819,8.839 168.423,-79.628c32.643,-38.63 46.52,-89.724 37.904,-139.56c-8.616,-49.836 -38.843,-93.305 -82.561,-118.732c-19.13,-11.079 -42.297,-20.143 -70.325,-26.146c-39.927,-8.497 -81.532,-3.828 -118.583,13.306c-31.866,14.726 -67.576,39.121 -87.403,78.721c-41.491,82.871 -135.931,11.376 -101.697,-50.848c22.591,-41.061 57.614,-92.682 124.001,-129.265Z"/></clipPath><g clip-path="url(#bt_clip2)"><path d="M164.964,208.482l-40.679,50.848l-68.645,55.933l-22.882,127.121l15.255,132.206l78.815,118.88l147.46,31.122l78.815,-46.866l-81.357,-37.034l-56.951,-91.527l16.273,-124.579l75.558,-71.188l-19.624,-119.494l-55.933,-38.192l-66.103,12.768Z" style="fill:url(#bt_Linear3);"/><path d="M261.576,358.485c0,0 -84.907,26.262 -116.951,134.748c-32.044,108.486 89.636,304.304 419.499,132.206l81.357,-193.224l2.542,-114.409l-76.273,-20.339l-141.429,155.088l-87.003,-58.476l-81.743,-35.594Z" style="fill:url(#bt_Linear4);"/><path d="M261.576,493.233c0,0 24.094,156.672 211.021,71.188c186.926,-85.484 143.092,-352.926 140.652,-442.381l-79.634,-81.357l-167.8,-73.73l-83.9,5.085l-40.679,66.103l208.478,129.663l2.542,144.918l-50.848,106.782l-94.784,45.764l-45.049,27.967Z" style="fill:url(#bt_Linear5);"/><path d="M-2.836,122.04l-22.882,137.291l137.291,0l55.933,-83.9l81.357,-5.085l94.456,38.136l83.514,195.766c0,0 105.466,-64.271 45.764,-254.242c-59.702,-189.971 -373.325,-171.102 -533.908,-150.003l58.476,122.036Z" style="fill:url(#bt_Linear6);"/></g><g><text x="839.113px" y="376.85px" style="font-family:'Poppins-Bold', 'Poppins';font-weight:700;font-size:395.277px;fill:currentColor;">D<tspan x="1205.534px 1498.435px 1766.037px 2132.459px 2522.202px 2844.353px 3166.504px " y="376.85px 376.85px 376.85px 376.85px 376.85px 376.85px 376.85px ">ELDOSSI</tspan></text><text x="857.829px" y="582.368px" style="font-family:'Poppins-Regular', 'Poppins';font-size:164.699px;fill:currentColor;">A<tspan x="1053.326px 1234.495px 1415.663px 1611.161px 1736.167px 1936.441px 2061.447px 2242.616px 2423.784px 2592.765px 2819.061px 2988.042px 3188.316px " y="582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px 582.368px ">SSAINISSEMENT</tspan></text></g></g><defs><linearGradient id="bt_Linear1" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(326.344331,-197.910525,197.910525,326.344331,293.062768,559.584802)"><stop offset="0" style="stop-color:#fff;stop-opacity:1"/><stop offset="1" style="stop-color:#a6a6a6;stop-opacity:1"/></linearGradient><linearGradient id="bt_Linear3" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(1.799187,-444.399089,444.399089,1.799187,224.693678,669.335185)"><stop offset="0" style="stop-color:#0a6d25;stop-opacity:1"/><stop offset="0.54" style="stop-color:#03d23a;stop-opacity:1"/><stop offset="1" style="stop-color:#00fa42;stop-opacity:1"/></linearGradient><linearGradient id="bt_Linear4" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(508.348805,0,0,396.003938,139.674397,495.468706)"><stop offset="0" style="stop-color:#00fa42;stop-opacity:1"/><stop offset="0.46" style="stop-color:#03d23a;stop-opacity:1"/><stop offset="1" style="stop-color:#0a6d25;stop-opacity:1"/></linearGradient><linearGradient id="bt_Linear5" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(200.541872,-474.985261,474.985261,200.541872,306.624101,568.580735)"><stop offset="0" style="stop-color:#00fa42;stop-opacity:1"/><stop offset="0.46" style="stop-color:#03d23a;stop-opacity:1"/><stop offset="1" style="stop-color:#0a6d25;stop-opacity:1"/></linearGradient><linearGradient id="bt_Linear6" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(-469.513545,-80.963397,80.963397,-469.513545,490.899137,224.936096)"><stop offset="0" style="stop-color:#00fa42;stop-opacity:1"/><stop offset="0.46" style="stop-color:#03d23a;stop-opacity:1"/><stop offset="1" style="stop-color:#0a6d25;stop-opacity:1"/></linearGradient></defs></svg><div class="boot-bar"></div></div>
+  </div>
+
   <section id="login" class="login" hidden>
-    <form id="login-form" class="card login-card" novalidate>
-      <div class="brand"><span aria-hidden="true">🚚</span> Optimiseur de Tournées</div>
-      <h1>Connexion</h1>
+    <form id="login-form" class="glass login-card" novalidate>
+      <div class="logo-slot"></div>
+      <h1>Bonjour</h1>
+      <p class="lead">Connectez-vous pour préparer vos tournées.</p>
       <label>E-mail<input type="email" name="email" autocomplete="username" required></label>
       <label>Mot de passe<input type="password" name="password" autocomplete="current-password" required></label>
-      <p class="form-error" id="login-error" role="alert" hidden></p>
-      <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+      <p class="note err" id="login-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">Se connecter</button>
       <button class="btn-link" type="button" id="forgot">Mot de passe oublié ?</button>
     </form>
-    <form id="newpwd-form" class="card login-card" hidden>
+    <form id="newpwd-form" class="glass login-card" hidden>
+      <div class="logo-slot"></div>
       <h1>Nouveau mot de passe</h1>
-      <label>Mot de passe (8 caractères min.)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
-      <p class="form-error" id="newpwd-error" role="alert" hidden></p>
-      <button class="btn btn-primary btn-block" type="submit">Enregistrer</button>
+      <label>Mot de passe (8 caractères minimum)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+      <p class="note err" id="newpwd-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">Enregistrer</button>
     </form>
   </section>
 
-  <!-- ── Application ────────────────────────────────────────────────────── -->
   <div id="app" hidden>
     <header class="topbar">
-      <div class="brand"><span aria-hidden="true">🚚</span> Tournées WC</div>
-      <nav class="tabs" role="tablist">
-        <a href="#saisie" role="tab" data-view="saisie">📋 Saisie</a>
-        <a href="#clients" role="tab" data-view="clients">📇 Clients</a>
-        <a href="#tournee" role="tab" data-view="tournee">🗺️ Tournée</a>
-        <a href="#stock" role="tab" data-view="stock">📦 Stock</a>
-        <a href="#export" role="tab" data-view="export">📤 Export</a>
-        <a href="#carte" role="tab" data-view="carte">📍 Carte</a>
+      <a class="brand" href="#accueil" aria-label="Deldossi Assainissement, accueil"></a>
+      <nav class="topnav" aria-label="Navigation principale">
+        <span class="ink" aria-hidden="true"></span>
+        <a href="#accueil" data-view="accueil" data-ic="home">Accueil</a>
+        <a href="#clients" data-view="clients" data-ic="clients">Clients</a>
+        <a href="#saisie" data-view="saisie" data-ic="saisie">Préparer</a>
+        <a href="#tournee" data-view="tournee" data-ic="route">Tournée</a>
+        <a href="#stock" data-view="stock" data-ic="stock">Stock</a>
       </nav>
-      <div class="user">
-        <span id="store-badge" class="badge"></span>
-        <span id="user-email" class="muted small"></span>
-        <button id="logout" class="btn btn-sm" hidden>Se déconnecter</button>
+      <div class="top-right">
+        <a class="ctx-pill" href="#saisie" id="ctx-pill"><i class="dot"></i><span></span></a>
+        <button class="btn btn-ghost btn-icon btn-sm" id="logout" aria-label="Se déconnecter" title="Se déconnecter" hidden></button>
       </div>
     </header>
-    <div id="demo-banner" class="banner" hidden>
-      Mode démo : données fictives, enregistrées dans ce navigateur uniquement.
-      Renseignez <code>config.js</code> pour vous connecter à Supabase.
-      <button id="demo-reset" class="btn-link">Réinitialiser la démo</button>
-    </div>
 
-    <main>
+    <main id="main">
+      <section id="view-accueil" class="view" hidden></section>
       <section id="view-saisie" class="view" hidden></section>
-      <section id="view-clients" class="view" hidden></section>
       <section id="view-tournee" class="view" hidden></section>
+      <section id="view-clients" class="view" hidden></section>
       <section id="view-stock" class="view" hidden></section>
-      <section id="view-export" class="view" hidden></section>
-      <section id="view-carte" class="view" hidden></section>
     </main>
+
+    <nav class="bottom-nav" aria-label="Navigation">
+      <a href="#accueil" data-view="accueil" data-ic="home">Accueil</a>
+      <a href="#clients" data-view="clients" data-ic="clients">Clients</a>
+      <a href="#saisie" data-view="saisie" data-ic="saisie" class="fab">Préparer</a>
+      <a href="#tournee" data-view="tournee" data-ic="route">Tournée</a>
+      <a href="#stock" data-view="stock" data-ic="stock">Stock</a>
+    </nav>
+
+    <button class="btn help-fab" id="help-fab" aria-label="Contacter l'assistance" title="Assistance"></button>
   </div>
 
-  <div id="boot" class="boot">Chargement…</div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script type="module" src="js/app.js?v=2"></script>
+  <script type="module" src="js/app.js?v=202611161929"></script>
 </body>
 </html>

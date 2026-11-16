@@ -59,3 +59,21 @@ grant execute on function public.replace_stock(jsonb)       to authenticated;
 --     ('prenom.nom@exemple.fr'),
 --     ('collegue@exemple.fr')
 -- on conflict do nothing;
+
+-- ── Demandes d'assistance (bouton « Assistance », « Mot de passe oublié ») ─
+create table if not exists public.tickets (
+    id          uuid primary key default gen_random_uuid(),
+    created_at  timestamptz not null default now(),
+    email       text not null default '' check (char_length(email) <= 200),
+    sujet       text not null check (char_length(sujet) between 1 and 120),
+    message     text not null default '' check (char_length(message) <= 4000),
+    page        text not null default '' check (char_length(page) <= 60),
+    navigateur  text not null default '' check (char_length(navigateur) <= 300)
+);
+alter table public.tickets enable row level security;
+drop policy if exists tickets_depot on public.tickets;
+create policy tickets_depot on public.tickets for insert to anon, authenticated with check (true);
+grant insert on public.tickets to anon, authenticated;
+
+-- Chiffres de la tournée (accueil : km économisés du mois)
+alter table public.tournees add column if not exists stats jsonb not null default '{}'::jsonb;

@@ -2,23 +2,29 @@
 // avec fenêtres horaires, heure de départ optimale, pause déjeuner, mode
 // périphérique toulousain, réordonnancement manuel. Porté de tournees.py.
 
-import { geocode, DEPOTS } from "./util.js";
-import { PAUSE_DEJEUNER_MIN, parseHhmm, qtyLabel, articleKey, fmtMin } from "./metier.js";
-import { couleursTexte } from "./util.js";
+import { geocode, DEPOTS } from "./util.js?v=202611161929";
+import { PAUSE_DEJEUNER_MIN, parseHhmm, qtyLabel, articleKey, fmtMin } from "./metier.js?v=202611161929";
+import { couleursTexte } from "./util.js?v=202611161929";
 
 const OSRM_URL = "https://router.project-osrm.org";
 const INF = 1e9;
 
+let currentSignal = null;
 async function osrm(path) {
-  let r;
-  try {
-    r = await fetch(`${OSRM_URL}${path}`, { signal: AbortSignal.timeout(30000) });
-  } catch (e) {
-    throw new Error("Service d'itinéraire OSRM injoignable (" + (e.name === "TimeoutError" ? "délai dépassé" : e.message) + ").");
+  let r, last;
+  for (let essai = 0; essai < 2; essai++) {
+    try {
+      const sig = currentSignal && AbortSignal.any ? AbortSignal.any([currentSignal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
+      r = await fetch(`${OSRM_URL}${path}`, { signal: sig });
+      const data = await r.json().catch(() => ({}));
+      if (data.code === "Ok") return data;
+      last = new Error("Le calcul d'itinéraire a échoué pour ces adresses.");
+    } catch (e) {
+      if (currentSignal?.aborted) { const a = new Error("Calcul annulé."); a.name = "AbortError"; throw a; }
+      last = new Error("Le service de calcul d'itinéraire ne répond pas. Vos arrêts sont conservés, réessayez dans un instant.");
+    }
   }
-  const data = await r.json().catch(() => ({}));
-  if (data.code !== "Ok") throw new Error(`Service d'itinéraire OSRM : ${data.message || data.code || r.status}`);
-  return data;
+  throw last;
 }
 const coordStr = (pts) => pts.map(([lat, lon]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join(";");
 
@@ -193,26 +199,38 @@ async function pool(items, limit, fn) {
  * @returns { result, messages: [{kind, text}] }
  */
 export async function optimiser(p) {
+  currentSignal = p.signal || null;
+  try { return await optimiserInterne(p); } finally { currentSignal = null; }
+}
+
+async function optimiserInterne(p) {
   const say = p.onStatus || (() => {});
   const messages = [];
   const depotDepartAddr = DEPOTS[p.depotDepartKey];
   const depotRetourAddr = DEPOTS[p.depotRetourKey] || depotDepartAddr;
 
-  say("Géocodage des dépôts…");
-  const gDep = await geocode(depotDepartAddr);
+  say("Localisation des dépôts", 3);
+  const gDep = await geocode(depotDepartAddr, p.signal);
   if (!gDep) throw new Error(`Impossible de géocoder le dépôt de départ : ${depotDepartAddr}`);
   let gRet = depotRetourAddr === depotDepartAddr ? gDep : await geocode(depotRetourAddr).catch(() => null);
   if (!gRet) { messages.push({ kind: "warn", text: "Dépôt de retour introuvable : le dépôt de départ est utilisé." }); gRet = gDep; }
 
-  say(`Géocodage de ${p.stops.length} adresse(s)…`);
   let done = 0;
   const geos = await pool(p.stops, 6, async (s) => {
-    const g = await geocode(s["Adresse"]);
-    say(`Géocodage : ${++done}/${p.stops.length}`);
+    const g = await geocode(s["Adresse"], p.signal);
+    done++;
+    say(`Localisation des adresses ${done}/${p.stops.length}`, 5 + Math.round((done / p.stops.length) * 50));
     return g;
   });
-  const failed = p.stops.filter((_, i) => !geos[i]).map((s) => s["Adresse"]);
-  if (failed.length) messages.push({ kind: "warn", text: "Adresses introuvables, ignorées : " + failed.join(" · ") });
+  if (p.signal?.aborted) { const a = new Error("Calcul annulé."); a.name = "AbortError"; throw a; }
+  const failedIdx = p.stops.map((_, i) => i).filter((i) => !geos[i]);
+  if (failedIdx.length && !p.ignorerIntrouvables) {
+    const e = new Error("Adresses introuvables");
+    e.code = "INTROUVABLES";
+    e.lignes = failedIdx.map((i) => ({ ligne: p.stops[i]._ligne, adresse: p.stops[i]["Adresse"], client: p.stops[i]["Nom du client"] }));
+    throw e;
+  }
+  const absents = failedIdx.map((i) => ({ ligne: p.stops[i]._ligne, adresse: p.stops[i]["Adresse"], client: p.stops[i]["Nom du client"] }));
   const ok = p.stops.map((s, i) => ({ s, g: geos[i] })).filter((x) => x.g);
   if (!ok.length) throw new Error("Aucune adresse valide après géocodage.");
 
@@ -226,23 +244,23 @@ export async function optimiser(p) {
   let periNb = 0;
   if (p.eviterPeri) [tw, periNb] = injectePeri(tw, coords, legalMin);
 
-  say("Calcul des temps de trajet (OSRM)…");
+  say("Calcul des temps de trajet", 62);
   const M = await osrmTable(coords);
 
-  say("Optimisation de l'ordre des arrêts…");
+  say("Recherche du meilleur ordre", 75);
   let order = twoOpt(nearestNeighbour(n, M), (o) => costDist(o, M, R));
 
   let departMin;
   const raw = optimalDeparture(order, M, tw);
   if (raw == null) {
     departMin = legalMin;
-    messages.push({ kind: "info", text: `Aucune contrainte horaire client : départ à ${fmtMin(departMin)} (heure de départ au plus tôt).` });
+    messages.push({ kind: "info", text: `Départ à ${fmtMin(departMin)}, aucun créneau client à respecter.` });
   } else if (raw < legalMin) {
     departMin = legalMin;
     messages.push({ kind: "warn", early: raw, text: "" });
   } else {
     departMin = raw;
-    messages.push({ kind: "ok", text: `Heure de départ recommandée : ${fmtMin(departMin)}, calculée pour respecter les contraintes avec le minimum d'attente.` });
+    messages.push({ kind: "ok", text: `Départ conseillé à ${fmtMin(departMin)} pour tenir tous les créneaux sans attente inutile.` });
   }
 
   const hasTw = tw.slice(1, R).some((w) => w.earliest != null || w.latest != null);
@@ -270,21 +288,23 @@ export async function optimiser(p) {
     };
   });
 
-  say("Tracé de l'itinéraire…");
-  const route = await osrmRoute([coords[0], ...order.map((i) => coords[i]), coords[R]]);
-  const orig = await osrmRoute(coords, false).catch(() => null);
+  say("Tracé de l'itinéraire", 90);
+  const [route, orig] = await Promise.all([
+    osrmRoute([coords[0], ...order.map((i) => coords[i]), coords[R]]),
+    osrmRoute(coords, false).catch(() => null),
+  ]);
+  say("Terminé", 100);
 
   const violes = stopsOrdered.filter((s) => s.violated);
   const early = messages.find((m) => m.early != null);
   if (early) {
     Object.assign(early, violes.length
-      ? { text: `Le calcul suggérait un départ à ${fmtMin(early.early)}, avant l'heure de départ au plus tôt (${fmtMin(legalMin)}). Départ fixé à ${fmtMin(departMin)} : certaines contraintes « Pas après » ne peuvent pas être respectées (voir ci-dessous).` }
-      : { kind: "ok", text: `Départ à ${fmtMin(departMin)} (heure de départ au plus tôt) : toutes les contraintes horaires sont respectées.` });
+      ? { text: `Il faudrait partir à ${fmtMin(early.early)} pour tenir tous les créneaux. Départ maintenu à ${fmtMin(departMin)}.` }
+      : { kind: "ok", text: `Départ à ${fmtMin(departMin)} : tous les créneaux sont respectés.` });
     delete early.early;
   }
   if (violes.length) {
-    messages.push({ kind: "warn", text: "Contraintes horaires non respectables : " + violes.map((s) =>
-      `arrêt ${s.order_num} (${s.address}) arrivée ${fmtMin(s.arrival_min)} > ${fmtMin(s.tw_late)}`).join(" · ") });
+    messages.push({ kind: "warn", text: `${violes.length} créneau${violes.length > 1 ? "x" : ""} non tenu${violes.length > 1 ? "s" : ""}.` });
   }
 
   const durMin = route.duration_min + (p.pause ? PAUSE_DEJEUNER_MIN : 0);
@@ -299,8 +319,10 @@ export async function optimiser(p) {
     duration_min: durMin,
     fuel_liters: fuelL,
     fuel_cost: fuelL * p.fuelPrice,
-    km_saved: orig ? Math.max(0, orig.distance_km - route.distance_km) : 0,
-    time_saved_min: orig ? Math.max(0, orig.duration_min - route.duration_min) : 0,
+    // Gain par rapport à l'ordre de saisie (signé : négatif si les créneaux imposent un détour)
+    km_saved: orig ? orig.distance_km - route.distance_km : null,
+    time_saved_min: orig ? orig.duration_min - route.duration_min : null,
+    absents,
     geometry: route.geometry,
     depot_coords: coords[0], depot_retour_coords: coords[R],
     depot_depart_addr: depotDepartAddr, depot_retour_addr: depotRetourAddr,
@@ -316,8 +338,8 @@ export async function optimiser(p) {
   return { result, messages };
 }
 
-/** Recalcule horaires, distance et tracé pour un ordre manuel (indices dans result.stops_ordered). */
-export async function recalcManuel(result, newOrder) {
+/** Horaires recalculés localement (instantané) pour un ordre manuel ; tracé et distance inchangés. */
+export function recalcLocal(result, newOrder) {
   const base = result.stops_ordered;
   const M = result.matrix, R = result.retour_idx;
   const tw = [];
@@ -327,23 +349,27 @@ export async function recalcManuel(result, newOrder) {
   const pauseIdx = findPausePosition(prelim);
   const arrivals = computeArrivals(order, M, result.depart_min, tw, result.pause_dejeuner ? pauseIdx : null);
   const stops = newOrder.map((k, rank) => ({ ...base[k], order_num: rank + 1, ...pickArr(arrivals[rank]) }));
+  const last = stops[stops.length - 1];
+  let returnMin = last.departure_min + M[last.mi][R] / 60;
+  if (result.pause_dejeuner && pauseIdx >= stops.length - 1) returnMin += PAUSE_DEJEUNER_MIN;
+  return { ...result, stops_ordered: stops, return_min: returnMin, pause_idx: pauseIdx, is_manual: true,
+    manual_order: [...newOrder], route_pending: true, recalc_ok: true };
+}
 
+/** Ordre manuel complet : horaires + tracé, distance et carburant réels. */
+export async function recalcManuel(result, newOrder) {
+  const local = recalcLocal(result, newOrder);
   let { geometry, distance_km, duration_min } = result;
   let recalcOk = true;
   try {
-    const route = await osrmRoute([result.depot_coords, ...stops.map((s) => [s.lat, s.lon]), result.depot_retour_coords]);
+    const route = await osrmRoute([result.depot_coords, ...local.stops_ordered.map((s) => [s.lat, s.lon]), result.depot_retour_coords]);
     geometry = route.geometry;
     distance_km = route.distance_km;
     duration_min = route.duration_min + (result.pause_dejeuner ? PAUSE_DEJEUNER_MIN : 0);
   } catch { recalcOk = false; }
-
-  const last = stops[stops.length - 1];
-  let returnMin = last.departure_min + M[last.mi][R] / 60;
-  if (result.pause_dejeuner && pauseIdx >= stops.length - 1) returnMin += PAUSE_DEJEUNER_MIN;
   const fuelL = distance_km * result.fuel_conso / 100;
-  return { ...result, stops_ordered: stops, geometry, distance_km, duration_min,
-    fuel_liters: fuelL, fuel_cost: fuelL * result.fuel_price, return_min: returnMin,
-    pause_idx: pauseIdx, is_manual: true, manual_order: [...newOrder], recalc_ok: recalcOk };
+  return { ...local, geometry, distance_km, duration_min, fuel_liters: fuelL, fuel_cost: fuelL * result.fuel_price,
+    route_pending: false, recalc_ok: recalcOk };
 }
 
 const pickArr = (a) => ({ arrival_min: a.arrival_min, departure_min: a.departure_min,

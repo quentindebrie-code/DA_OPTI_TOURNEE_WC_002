@@ -1,8 +1,8 @@
 // Accès aux données : Supabase (supabase-js) ou mode démo (localStorage).
 // Même interface que supabase_store.py pour faciliter le portage.
 
-import { uid } from "./util.js";
-import { stockDefaut } from "./metier.js";
+import { uid } from "./util.js?v=202611161929";
+import { stockDefaut } from "./metier.js?v=202611161929";
 
 export const CLIENT_FIELDS = ["nom", "contact", "telephone", "email", "produit",
   "option_produit", "quantite", "couleurs", "pas_avant", "pas_apres", "notes"];
@@ -14,9 +14,9 @@ const pick = (obj, keys, dflt = "") =>
 function erreur(e) {
   const msg = e?.message || String(e);
   if (/row-level security|permission denied|JWT/i.test(msg)) {
-    return new Error("Accès refusé par Supabase : votre e-mail n'est pas dans la table « membres ».");
+    return new Error("accès refusé pour ce compte");
   }
-  if (/Failed to fetch|NetworkError/i.test(msg)) return new Error("Supabase injoignable (réseau).");
+  if (/Failed to fetch|NetworkError/i.test(msg)) return new Error("connexion au serveur impossible");
   return new Error(msg);
 }
 
@@ -54,7 +54,7 @@ export class SupabaseStore {
 
   async listTournees() {
     return this.#run(this.sb.from("tournees")
-      .select("id,nom,tour_date,chauffeur,nb_arrets,created_at,updated_at")
+      .select("id,nom,tour_date,chauffeur,nb_arrets,stats,created_at,updated_at")
       .order("updated_at", { ascending: false }));
   }
 
@@ -63,8 +63,8 @@ export class SupabaseStore {
     return rows[0] || null;
   }
 
-  async saveTournee(id, nom, tourDate, chauffeur, stops, meta) {
-    const body = { nom, tour_date: tourDate || null, chauffeur, nb_arrets: stops.length, stops, meta,
+  async saveTournee(id, nom, tourDate, chauffeur, stops, meta, stats = {}) {
+    const body = { nom, tour_date: tourDate || null, chauffeur, nb_arrets: stops.length, stops, meta, stats,
       updated_at: new Date().toISOString() };
     if (id) {
       const rows = await this.#run(this.sb.from("tournees").update(body).eq("id", id).select("id"));
@@ -195,11 +195,11 @@ export class DemoStore {
 
   async getTournee(id) { return this.db.tournees[id] ? this.#clone(this.db.tournees[id]) : null; }
 
-  async saveTournee(id, nom, tourDate, chauffeur, stops, meta) {
+  async saveTournee(id, nom, tourDate, chauffeur, stops, meta, stats = {}) {
     const tid = id || uid();
     const now = new Date().toISOString();
     const old = this.db.tournees[tid] || {};
-    this.db.tournees[tid] = { id: tid, nom, tour_date: tourDate, chauffeur, nb_arrets: stops.length,
+    this.db.tournees[tid] = { id: tid, nom, tour_date: tourDate, chauffeur, nb_arrets: stops.length, stats,
       stops: this.#clone(stops), meta: this.#clone(meta), created_at: old.created_at || now, updated_at: now };
     this.#save();
     return tid;

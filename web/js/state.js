@@ -2,9 +2,9 @@
 // résultat d'optimisation, barème, stock), avec brouillon local et
 // sauvegarde automatique de la tournée ouverte dans Supabase.
 
-import { DEPOT_DEFAUT, toast } from "./util.js";
+import { DEPOT_DEFAUT, toast } from "./util.js?v=202611161929";
 import { baremeDefaut, normaliserBareme, BAREME_SETTING_KEY, nouvelArret, normaliserArret,
-  autoDuree, cleanStock, stockDefaut, STOPS_COLUMNS } from "./metier.js";
+  autoDuree, cleanStock, stockDefaut, STOPS_COLUMNS, allouerCouleurs } from "./metier.js?v=202611161929";
 
 const DRAFT_KEY = "brouillon-tournee-v1";
 const today = () => new Date().toLocaleDateString("sv-SE"); // AAAA-MM-JJ local
@@ -36,12 +36,30 @@ export const S = {
 const listeners = {};
 export function on(evt, fn) { (listeners[evt] ||= new Set()).add(fn); }
 export function emit(evt) {
+  if (evt === "stops" || evt === "stock") majCouleursAuto();
   (listeners[evt] || []).forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
   if (["stops", "params", "result", "tournee"].includes(evt)) saveDraft();
   if (["stops", "params", "tournee"].includes(evt)) scheduleAutosave();
 }
 
 export const activeResult = () => S.manual || S.result;
+
+/** Couleur proposée automatiquement (selon le stock) pour chaque arrêt sans couleur. */
+export function majCouleursAuto() {
+  const auto = allouerCouleurs(S.stops, S.stock, S.stockManutentions);
+  S.stops.forEach((s, i) => { s.CouleurAuto = auto[i] || ""; });
+}
+/** Arrêts tels qu'utilisés pour le calcul : couleur saisie, sinon couleur automatique. */
+export const stopsEffectifs = (stops = S.stops) =>
+  stops.map((s) => ({ ...s, Couleur: String(s.Couleur || "").trim() || s.CouleurAuto || "" }));
+
+// ── Annulation ───────────────────────────────────────────────────────────────
+export const instantane = () => structuredClone({ stops: S.stops, result: S.result, manual: S.manual,
+  resultStopsHash: S.resultStopsHash });
+export function restaurer(snap) {
+  Object.assign(S, structuredClone(snap));
+  emit("stops"); emit("result");
+}
 
 // ── Brouillon local (survit au rechargement de la page) ─────────────────────
 let draftTimer = null;
@@ -83,7 +101,7 @@ export function stopsVides() {
 export function stopsRecords(stops = S.stops) {
   return stops
     .filter((s) => String(s["Adresse"]).trim() || String(s["Client"]).trim() || String(s["Nom du client"]).trim())
-    .map(({ Suppr, ...rest }) => rest);
+    .map(({ Suppr, CouleurAuto, ...rest }) => rest);
 }
 
 export const stopsValides = () => S.stops.filter((s) => String(s["Adresse"] || "").trim());
@@ -143,8 +161,11 @@ export async function saveTournee(nom, asNew = false) {
   const h = hashTournee(nom);
   saving = (async () => {
     try {
+      const r = S.manual || S.result;
+      const stats = r && !resultatObsolete() ? { km: +r.distance_km.toFixed(1), km_gagnes: r.km_saved == null ? null : +r.km_saved.toFixed(1),
+        min_gagnees: r.time_saved_min == null ? null : Math.round(r.time_saved_min), optimisee: true } : { optimisee: false };
       const id = await S.store.saveTournee(asNew ? null : S.tournee.id, nom, S.params.tourDate,
-        S.params.driver, records, meta());
+        S.params.driver, records, meta(), stats);
       Object.assign(S.tournee, { id, nom, savedHash: h, savedAt: new Date().toISOString(), error: null });
       return true;
     } catch (e) {
@@ -192,6 +213,7 @@ export async function loadTournee(id, asCopy = false) {
 
 export function nouvelleTournee() {
   S.stops = stopsVides();
+  S.optimMessages = [];
   Object.assign(S.tournee, { id: null, nom: "", savedHash: null, savedAt: null, error: null });
   S.result = null; S.manual = null;
   emit("stops"); emit("result"); emit("tournee");
@@ -213,7 +235,7 @@ export async function saveStock(rows, message = "Stock enregistré") {
     await S.store.saveStock(S.stock);
     S.stockMaj = new Date().toISOString();
     S.stockError = null;
-    toast(message);
+    if (message) toast(message);
   } catch (e) {
     S.stockError = e.message;
     toast("Stock non enregistré : " + e.message, "err");
@@ -236,4 +258,5 @@ export async function initState(store) {
     if (stk.status === "rejected") S.stockError = stk.reason?.message;
   }
   if (!loadDraft() || !S.stops.length) S.stops = stopsVides();
+  majCouleursAuto();
 }
