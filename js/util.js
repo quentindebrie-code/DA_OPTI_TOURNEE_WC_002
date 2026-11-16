@@ -1,6 +1,6 @@
 // Constantes métier, utilitaires et micro-interactions partagées.
 
-import { icon } from "./icons.js?v=202611162100";
+import { icon } from "./icons.js?v=202611162108";
 
 export const DEPOTS = {
   "Saint-Sulpice": "Imp. Gaston Phoebus, 81370 Saint-Sulpice-la-Pointe",
@@ -234,7 +234,7 @@ export function moveInk(container, active) {
   if (!ink) return;
   if (!active) { ink.style.opacity = "0"; return; }
   ink.style.opacity = "1";
-  ink.style.left = `${active.offsetLeft}px`;
+  ink.style.transform = `translateX(${active.offsetLeft}px)`;
   ink.style.width = `${active.offsetWidth}px`;
 }
 

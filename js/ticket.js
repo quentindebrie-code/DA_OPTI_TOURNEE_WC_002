@@ -1,8 +1,8 @@
 // Demandes d'assistance : enregistrées dans Supabase (table « tickets ») et envoyées
 // par e-mail au support via FormSubmit (service gratuit, sans serveur).
 
-import { icon } from "./icons.js?v=202611162100";
-import { esc, ouvrirDialog, closeDialog, toast, withBusy } from "./util.js?v=202611162100";
+import { icon } from "./icons.js?v=202611162108";
+import { esc, ouvrirDialog, closeDialog, toast, withBusy } from "./util.js?v=202611162108";
 
 export const SUPPORT_EMAIL = "quentin.d@hympyr.fr";
 const SUJETS = ["Signaler un problème", "Proposer une amélioration", "Poser une question", "Mot de passe oublié", "Autre demande"];

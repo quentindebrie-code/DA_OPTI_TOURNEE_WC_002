@@ -1,12 +1,12 @@
 // Feuille de tournée PDF (jsPDF + AutoTable) : récapitulatif, arrêts, matériel,
 // carte avec fond OpenStreetMap, consignes, annotations, fiches d'état des lieux.
 
-import { loadPdf } from "./libs.js?v=202611162100";
-import { fmtDate, ACTION_COLORS } from "./util.js?v=202611162100";
+import { loadPdf } from "./libs.js?v=202611162108";
+import { fmtDate, ACTION_COLORS } from "./util.js?v=202611162108";
 import { PAUSE_DEJEUNER_MIN, ACTION_BG, ACTION_CONSIGNES, PIECES_ETAT_LIEUX, ETAT_LIEUX_INTRO,
-  ETAT_LIEUX_INTRO_GENERAL, fmtMin, fmtDuree, prestationParts } from "./metier.js?v=202611162100";
-import { pauseSlot } from "./optim.js?v=202611162100";
-import { LOGO_SVG } from "./logo.js?v=202611162100";
+  ETAT_LIEUX_INTRO_GENERAL, fmtMin, fmtDuree, prestationParts } from "./metier.js?v=202611162108";
+import { pauseSlot } from "./optim.js?v=202611162108";
+import { LOGO_SVG } from "./logo.js?v=202611162108";
 
 // ── Logo Deldossi pour le PDF : symbole + textes dessinés en Poppins ─────────
 let logoCache = null;
