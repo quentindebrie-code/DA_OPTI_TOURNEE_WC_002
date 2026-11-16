@@ -1,8 +1,8 @@
 // Accueil : reprise de la tournée en cours, progression, chiffres du mois, raccourcis.
 
-import { icon } from "./icons.js?v=202611161929";
-import { esc, fmtDate, toast } from "./util.js?v=202611161929";
-import { S, on, stopsValides, resultatObsolete, loadTournee } from "./state.js?v=202611161929";
+import { icon } from "./icons.js?v=202611162100";
+import { esc, fmtDate, toast } from "./util.js?v=202611162100";
+import { S, on, stopsValides, resultatObsolete, loadTournee } from "./state.js?v=202611162100";
 
 export function initAccueil(root, ctx) {
   let tournees = null;

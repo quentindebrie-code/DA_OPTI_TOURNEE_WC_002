@@ -2,9 +2,9 @@
 // résultat d'optimisation, barème, stock), avec brouillon local et
 // sauvegarde automatique de la tournée ouverte dans Supabase.
 
-import { DEPOT_DEFAUT, toast } from "./util.js?v=202611161929";
+import { DEPOT_DEFAUT, toast } from "./util.js?v=202611162100";
 import { baremeDefaut, normaliserBareme, BAREME_SETTING_KEY, nouvelArret, normaliserArret,
-  autoDuree, cleanStock, stockDefaut, STOPS_COLUMNS, allouerCouleurs } from "./metier.js?v=202611161929";
+  autoDuree, cleanStock, stockDefaut, STOPS_COLUMNS, allouerCouleurs } from "./metier.js?v=202611162100";
 
 const DRAFT_KEY = "brouillon-tournee-v1";
 const today = () => new Date().toLocaleDateString("sv-SE"); // AAAA-MM-JJ local
