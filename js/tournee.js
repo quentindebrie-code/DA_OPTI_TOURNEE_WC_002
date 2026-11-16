@@ -1,12 +1,12 @@
 // Écran « Tournée » : résultat de l'optimisation, carte, ordre réorganisable,
 // feuille de route (PDF / Excel) et mise à jour du stock une fois la tournée faite.
 
-import { icon } from "./icons.js?v=202611162108";
-import { ACTION_COLORS, PASTILLE, esc, toast, confirmer, fmtDate, withBusy, confettis } from "./util.js?v=202611162108";
-import { PAUSE_DEJEUNER_MIN, fmtMin, fmtDuree, besoinsTournee, projeterStock } from "./metier.js?v=202611162108";
-import { S, on, emit, activeResult, resultatObsolete, stopsEffectifs, saveStock } from "./state.js?v=202611162108";
-import { recalcLocal, recalcManuel, pauseSlot } from "./optim.js?v=202611162108";
-import { loadSortable, loadLeaflet, telecharger, XLSX_MIME, loadPdf, loadExcel } from "./libs.js?v=202611162108";
+import { icon } from "./icons.js?v=202611162119";
+import { ACTION_COLORS, PASTILLE, esc, toast, confirmer, fmtDate, withBusy, confettis } from "./util.js?v=202611162119";
+import { PAUSE_DEJEUNER_MIN, fmtMin, fmtDuree, besoinsTournee, projeterStock } from "./metier.js?v=202611162119";
+import { S, on, emit, activeResult, resultatObsolete, stopsEffectifs, saveStock } from "./state.js?v=202611162119";
+import { recalcLocal, recalcManuel, pauseSlot } from "./optim.js?v=202611162119";
+import { loadSortable, loadLeaflet, telecharger, XLSX_MIME, loadPdf, loadExcel } from "./libs.js?v=202611162119";
 
 export function pastilles(couleurs) {
   return String(couleurs || "").split(",").map((c) => c.trim()).filter(Boolean)
@@ -232,14 +232,14 @@ export function initTournee(root, ctx) {
     await withBusy(btn, "Préparation…", async () => {
       try {
         if (kind === "pdf") {
-          const { exportTourneePdf } = await import("./pdf.js?v=202611162108");
+          const { exportTourneePdf } = await import("./pdf.js?v=202611162119");
           telecharger(await exportTourneePdf(r, S.params.tourDate, S.params.driver), `Feuille_de_route_${date}${suffix}.pdf`, "application/pdf");
           S.tournee.pdfAt = new Date().toISOString();
           S.tournee.stockAt = null;
           emit("tournee");
           toast("Feuille de route téléchargée");
         } else {
-          const { exportTourneeExcel } = await import("./xlsx.js?v=202611162108");
+          const { exportTourneeExcel } = await import("./xlsx.js?v=202611162119");
           telecharger(await exportTourneeExcel(r, S.params.tourDate, S.params.driver), `Tournee_${date}${suffix}.xlsx`, XLSX_MIME);
           toast("Fichier Excel téléchargé");
         }

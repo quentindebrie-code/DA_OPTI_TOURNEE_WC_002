@@ -1,7 +1,7 @@
 // Règles métier portées de tournees.py : barème des durées, parc / stock,
 // normalisation des saisies, consignes et nomenclature d'état des lieux.
 
-import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursArret, couleursTexte } from "./util.js?v=202611162108";
+import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursArret, couleursTexte } from "./util.js?v=202611162119";
 
 export const ACTIONS_CATALOGUE = ["Nettoyer", "Déposer", "Retirer", "Chargement", "Déchargement"];
 export const OPTIONS_CATALOGUE = ["Lave-main", "Urinoir"];

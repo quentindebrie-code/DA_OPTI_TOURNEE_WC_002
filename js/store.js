@@ -1,8 +1,8 @@
 // Accès aux données : Supabase (supabase-js) ou mode démo (localStorage).
 // Même interface que supabase_store.py pour faciliter le portage.
 
-import { uid } from "./util.js?v=202611162108";
-import { stockDefaut } from "./metier.js?v=202611162108";
+import { uid } from "./util.js?v=202611162119";
+import { stockDefaut } from "./metier.js?v=202611162119";
 
 export const CLIENT_FIELDS = ["nom", "contact", "telephone", "email", "produit",
   "option_produit", "quantite", "couleurs", "pas_avant", "pas_apres", "notes"];
