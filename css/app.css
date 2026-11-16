@@ -45,8 +45,7 @@
   --dialog-bg: rgba(250, 255, 251, .93);
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+html.dark {
     --text: #EAF8EE; --muted: #A9C4B2; --bg: #001A07;
     --line: rgba(210, 255, 225, .12);
     --field: rgba(0, 30, 10, .62); --field-line: rgba(210, 255, 225, .3);
@@ -58,7 +57,6 @@
     --ok: #7DF5A0; --ok-bg: rgba(0, 250, 66, .12); --warn: #F6C77A; --warn-bg: rgba(246, 199, 122, .13);
     --err: #FF9C94; --err-bg: rgba(255, 156, 148, .12); --info: #9BDCF5; --info-bg: rgba(0, 150, 200, .18);
     color-scheme: dark;
-  }
 }
 
 /* Teinte du fond selon l'écran (transition douce grâce à @property) */
@@ -83,10 +81,8 @@ body {
 .aqua i:nth-child(2) { width: 52vmax; height: 52vmax; right: 0; top: 18vmax; background: radial-gradient(closest-side, var(--b2), color-mix(in srgb, var(--b2) 45%, transparent) 45%, transparent); opacity: .7; animation: drift2 32s var(--ease) infinite alternate; }
 .aqua i:nth-child(3) { width: 58vmax; height: 58vmax; left: 22vmax; bottom: 0; background: radial-gradient(closest-side, var(--b3), color-mix(in srgb, var(--b3) 45%, transparent) 45%, transparent); opacity: .55; animation: drift3 38s var(--ease) infinite alternate; }
 body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.55), rgba(255,255,255,0) 60%); }
-@media (prefers-color-scheme: dark) {
-  .aqua { opacity: .42; }
-  body::after { background: radial-gradient(120% 90% at 50% 0%, rgba(0,60,20,.4), transparent 60%); }
-}
+html.dark .aqua { opacity: .42; }
+html.dark body::after { background: radial-gradient(120% 90% at 50% 0%, rgba(0,60,20,.4), transparent 60%); }
 @keyframes drift1 { to { transform: translate(14vmax, 10vmax) scale(1.12); } }
 @keyframes drift2 { to { transform: translate(-16vmax, 8vmax) scale(.9); } }
 @keyframes drift3 { to { transform: translate(10vmax, -12vmax) scale(1.08); } }
@@ -241,7 +237,7 @@ label.btn.btn-sm { font-size: .86rem; }
 .login-card .lead { text-align: center; color: var(--muted); margin: -8px 0 var(--s2); }
 .login-card .btn-link { align-self: center; }
 @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
-@media (prefers-color-scheme: dark) { .boot .logo-svg, .login-card .logo-svg, .brand { color: #F2FFF5 !important; } }
+html.dark :is(.boot .logo-svg, .login-card .logo-svg, .brand) { color: #F2FFF5 !important; }
 
 /* ── Barre du haut ──────────────────────────────────────────────────────── */
 .topbar {
@@ -488,7 +484,7 @@ main { padding: var(--s5) var(--s3) calc(var(--nav-h) + 110px); max-width: 1480p
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 .map-status { position: absolute; top: 12px; left: 50%; translate: -50% 0; z-index: 500; padding: 6px 14px; border-radius: var(--r-pill); font-size: .82rem; background: var(--glass-strong); border: 1px solid var(--glass-line); box-shadow: var(--shadow); animation: pop-in var(--t) var(--ease); }
-@media (prefers-color-scheme: dark) { .leaflet-tile-pane { filter: brightness(.8) contrast(1.05) saturate(.85); } .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #002A0D; color: var(--text); } }
+html.dark .leaflet-tile-pane { filter: brightness(.8) contrast(1.05) saturate(.85); } html.dark :is(.leaflet-popup-content-wrapper, .leaflet-popup-tip) { background: #002A0D; color: var(--text); }
 
 /* ── Clients ────────────────────────────────────────────────────────────── */
 .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 4px; border-radius: var(--r-pill); background: var(--inset); position: relative; }
@@ -692,3 +688,11 @@ label.client-item:has(input:checked) { border-color: var(--g500); background: va
   .topbar .top-right { justify-self: end; margin-left: 0; min-width: 0; max-width: 100%; }
   .topbar .ctx-pill { max-width: 100%; min-width: 0; }
 }
+
+/* Bouton clair / sombre et bascule animée (cercle qui s'ouvre depuis le bouton) */
+.theme-btn .i { transition: transform .5s var(--spring); }
+.theme-btn:hover .i { transform: rotate(-20deg) scale(1.08); }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-new(root) { animation: theme-reveal .55s var(--ease); }
+@keyframes theme-reveal { from { clip-path: circle(0 at var(--tx, 100%) var(--ty, 0)); } to { clip-path: circle(var(--tr, 150vmax) at var(--tx, 100%) var(--ty, 0)); } }
+html.theme-fade, html.theme-fade * { transition: background-color .35s var(--ease), color .35s var(--ease), border-color .35s var(--ease) !important; }

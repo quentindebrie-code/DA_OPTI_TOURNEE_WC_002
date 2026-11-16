@@ -13,8 +13,15 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://owpsojjsfwmfkqymfdiu.supabase.co" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="css/app.css?v=202611162119">
-  <link rel="modulepreload" href="js/app.js?v=202611162119">
+  <script>
+    // Thème choisi (clair / sombre) appliqué avant l'affichage pour éviter un flash
+    try {
+      var t = localStorage.getItem("theme");
+      if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.classList.add("dark");
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="css/app.css?v=202611162123">
+  <link rel="modulepreload" href="js/app.js?v=202611162123">
   <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm">
 </head>
 <body data-view="accueil">
@@ -57,6 +64,7 @@
       </nav>
       <div class="top-right">
         <a class="ctx-pill" href="#saisie" id="ctx-pill"><i class="dot"></i><span></span></a>
+        <button class="btn btn-ghost btn-icon btn-sm theme-btn" id="theme-btn" type="button"></button>
         <button class="btn btn-ghost btn-icon btn-sm" id="logout" aria-label="Se déconnecter" title="Se déconnecter" hidden></button>
       </div>
     </header>
@@ -81,6 +89,6 @@
   </div>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
-  <script type="module" src="js/app.js?v=202611162119"></script>
+  <script type="module" src="js/app.js?v=202611162123"></script>
 </body>
 </html>

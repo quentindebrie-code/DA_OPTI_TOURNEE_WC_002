@@ -1,9 +1,9 @@
 // Écran « Clients » : fiches (liste + fiche détaillée) et carte des points de livraison.
 
-import { icon } from "./icons.js?v=202611162119";
+import { icon } from "./icons.js?v=202611162123";
 import { PRODUITS_CATALOGUE, OPTIONS_WC, COULEURS_PRODUITS, PASTILLE, esc, normTxt, couleursArret, couleursTexte,
-  uid, geocode, toast, confirmer, moveInk, withBusy } from "./util.js?v=202611162119";
-import { loadLeaflet } from "./libs.js?v=202611162119";
+  uid, geocode, toast, confirmer, moveInk, withBusy } from "./util.js?v=202611162123";
+import { loadLeaflet } from "./libs.js?v=202611162123";
 
 const NEW = "__new__";
 
