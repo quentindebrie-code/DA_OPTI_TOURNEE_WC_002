@@ -684,3 +684,11 @@ label.client-item .grow small { display: block; overflow: hidden; text-overflow:
 label.client-item:has(input:checked) { border-color: var(--g500); background: var(--primary-soft); }
 .client-list { overflow-x: hidden; }
 .client-item[hidden] { display: none; }
+/* Barre du haut : le menu reste centré quel que soit le contenu à droite */
+@media (min-width: 900px) {
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: var(--s3); padding-left: 16px; padding-right: 16px; }
+  .topbar .brand { justify-self: start; }
+  .topbar .topnav { flex: none; }
+  .topbar .top-right { justify-self: end; margin-left: 0; min-width: 0; max-width: 100%; }
+  .topbar .ctx-pill { max-width: 100%; min-width: 0; }
+}

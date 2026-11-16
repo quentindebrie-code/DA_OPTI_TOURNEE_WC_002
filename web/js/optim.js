@@ -2,9 +2,9 @@
 // avec fenêtres horaires, heure de départ optimale, pause déjeuner, mode
 // périphérique toulousain, réordonnancement manuel. Porté de tournees.py.
 
-import { geocode, DEPOTS } from "./util.js?v=202611162108";
-import { PAUSE_DEJEUNER_MIN, parseHhmm, qtyLabel, articleKey, fmtMin } from "./metier.js?v=202611162108";
-import { couleursTexte } from "./util.js?v=202611162108";
+import { geocode, DEPOTS } from "./util.js?v=202611162119";
+import { PAUSE_DEJEUNER_MIN, parseHhmm, qtyLabel, articleKey, fmtMin } from "./metier.js?v=202611162119";
+import { couleursTexte } from "./util.js?v=202611162119";
 
 const OSRM_URL = "https://router.project-osrm.org";
 const INF = 1e9;
