@@ -1,11 +1,11 @@
 // Écran « Stock » : état du parc, tableau article × couleur, correction des quantités,
 // impact de la tournée en cours (couleurs automatiques comprises).
 
-import { icon } from "./icons.js?v=202611161929";
-import { COULEURS_PRODUITS, PASTILLE, esc, toast, confirmer, fmtDateHeure, moveInk, withBusy } from "./util.js?v=202611161929";
-import { ARTICLES_STOCK, stockDefaut, cleanStock, besoinsTournee, controleDisponibilite, projeterStock } from "./metier.js?v=202611161929";
-import { S, on, emit, saveStock, stopsEffectifs } from "./state.js?v=202611161929";
-import { telecharger, XLSX_MIME } from "./libs.js?v=202611161929";
+import { icon } from "./icons.js?v=202611162100";
+import { COULEURS_PRODUITS, PASTILLE, esc, toast, confirmer, fmtDateHeure, moveInk, withBusy } from "./util.js?v=202611162100";
+import { ARTICLES_STOCK, stockDefaut, cleanStock, besoinsTournee, controleDisponibilite, projeterStock } from "./metier.js?v=202611162100";
+import { S, on, emit, saveStock, stopsEffectifs } from "./state.js?v=202611162100";
+import { telecharger, XLSX_MIME } from "./libs.js?v=202611162100";
 
 const STATUT = { rupture: ["x-circle", "Rupture"], juste: ["alert", "Juste"], ok: ["check-circle", "Disponible"] };
 const past = (c) => (c ? `<i class="pastille" style="--pc:${PASTILLE[c] || "#ccc"}"></i>${esc(c)}` : "Au choix");
@@ -155,7 +155,7 @@ export function initStock(root) {
       el.value = "";
       if (!file) return;
       try {
-        const { parseStockExcel } = await import("./xlsx.js?v=202611161929");
+        const { parseStockExcel } = await import("./xlsx.js?v=202611162100");
         const { rows, message } = await parseStockExcel(file);
         const avant = structuredClone(S.stock);
         draft = null;
@@ -190,7 +190,7 @@ export function initStock(root) {
     }
     const act = b.dataset.act;
     try {
-      const { exportStockExcel } = await import("./xlsx.js?v=202611161929");
+      const { exportStockExcel } = await import("./xlsx.js?v=202611162100");
       if (act === "export") telecharger(await exportStockExcel(S.stock, null, jour()), `Stock_${fichierJour()}.xlsx`, XLSX_MIME);
       else if (act === "template") telecharger(await exportStockExcel(cleanStock(stockDefaut()).map((r) => ({ ...r, installes: 0, en_stock: 0 })), null, jour()), "Modele_stock.xlsx", XLSX_MIME);
       else if (act === "export-proj") telecharger(await exportStockExcel(S.stock, projeterStock(S.stock, besoinsTournee(stopsEffectifs(), S.stockManutentions)), jour()), `Stock_apres_tournee_${fichierJour()}.xlsx`, XLSX_MIME);

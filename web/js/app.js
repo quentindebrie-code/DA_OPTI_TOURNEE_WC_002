@@ -1,13 +1,13 @@
 // Point d'entrée : connexion, chargement des données (cache local puis réseau),
 // navigation avec transitions, pastille de contexte, assistance.
 
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611161929";
-import { SupabaseStore, DemoStore } from "./store.js?v=202611161929";
-import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611161929";
-import { icon } from "./icons.js?v=202611161929";
-import { logoHtml } from "./logo.js?v=202611161929";
-import { S, on, initState, resultatObsolete } from "./state.js?v=202611161929";
-import { ouvrirTicket } from "./ticket.js?v=202611161929";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611162100";
+import { SupabaseStore, DemoStore } from "./store.js?v=202611162100";
+import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611162100";
+import { icon } from "./icons.js?v=202611162100";
+import { logoHtml } from "./logo.js?v=202611162100";
+import { S, on, initState, resultatObsolete } from "./state.js?v=202611162100";
+import { ouvrirTicket } from "./ticket.js?v=202611162100";
 
 const $ = (s) => document.querySelector(s);
 // « ?demo » dans l'adresse force le mode démo (données fictives locales).
@@ -91,7 +91,7 @@ async function startApp(email) {
   try { cached = JSON.parse(localStorage.getItem(ctx.cacheKey()) || "null"); } catch { /* cache illisible */ }
   if (cached) ctx.clients = cached;
   const [mods] = await Promise.all([
-    Promise.all([import("./accueil.js?v=202611161929"), import("./saisie.js?v=202611161929"), import("./tournee.js?v=202611161929"), import("./clients.js?v=202611161929"), import("./stock.js?v=202611161929")]),
+    Promise.all([import("./accueil.js?v=202611162100"), import("./saisie.js?v=202611162100"), import("./tournee.js?v=202611162100"), import("./clients.js?v=202611162100"), import("./stock.js?v=202611162100")]),
     initState(ctx.store),
     cached ? null : ctx.refreshClients(),
   ]);
