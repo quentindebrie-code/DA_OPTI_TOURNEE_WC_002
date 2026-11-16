@@ -1,6 +1,6 @@
 // Point d'entrée : authentification, navigation par onglets, état partagé.
 
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=2";
 import { SupabaseStore, DemoStore } from "./store.js";
 import { toast } from "./util.js";
 import { initClients } from "./clients.js";
