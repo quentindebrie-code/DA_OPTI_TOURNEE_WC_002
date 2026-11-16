@@ -14,5 +14,5 @@
 // ce navigateur uniquement, sans connexion).
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const SUPABASE_URL = "";
-export const SUPABASE_PUBLISHABLE_KEY = "";
+export const SUPABASE_URL = "https://owpsojjsfwmfkqymfdiu.supabase.co";
+export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_rFM8kmsiR42eGmMlcRm9Wg_QYKEeODe";
