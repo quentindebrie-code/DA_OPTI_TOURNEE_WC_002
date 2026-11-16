@@ -1489,6 +1489,37 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MOT DE PASSE DE CONNEXION
+# ─────────────────────────────────────────────────────────────────────────────
+# Seule l'empreinte PBKDF2-SHA256 salée du mot de passe figure ici (dépôt
+# public). Pour le changer, lancer cette commande (elle demande le nouveau
+# mot de passe sans l'afficher dans l'historique du terminal) :
+#   python3 -c "import hashlib,os;m=input('Mot de passe : ').encode();s=os.urandom(16);print('ACCES_SEL = \"'+s.hex()+'\"');print('ACCES_EMPREINTE = \"'+hashlib.pbkdf2_hmac('sha256',m,s,600000).hex()+'\"')"
+# puis remplacer les deux lignes ci-dessous par celles affichées.
+ACCES_SEL = "e02d894e603862862c581a3d1e32da4b"
+ACCES_EMPREINTE = "e77a40cc17280eaa3f86401c1c3c12ea59923f779cd7f449a8042260d09a919c"
+
+
+def _mot_de_passe_valide(saisi: str) -> bool:
+    import hashlib, hmac
+    calcul = hashlib.pbkdf2_hmac("sha256", saisi.encode(), bytes.fromhex(ACCES_SEL), 600_000).hex()
+    return hmac.compare_digest(calcul, ACCES_EMPREINTE)
+
+
+if st.session_state.get("acces_ok") != ACCES_EMPREINTE:
+    st.title("🚛 Optimiseur de Tournées")
+    st.caption("Accès réservé à l'équipe. Utilisez le mot de passe transmis en interne.")
+    with st.form("connexion_equipe"):
+        _saisi = st.text_input("Mot de passe", type="password")
+        _valide = st.form_submit_button("Se connecter", type="primary")
+    if _valide:
+        if _mot_de_passe_valide(_saisi):
+            st.session_state["acces_ok"] = ACCES_EMPREINTE
+            st.rerun()
+        st.error("Mot de passe incorrect.")
+    st.stop()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3832,6 +3863,9 @@ with st.sidebar:
             "☁️ **Supabase non configuré** : base client, tournées et stock ne sont "
             "conservés que pendant cette session. Renseignez la section "
             "`[supabase]` des secrets Streamlit (voir README).")
+    if st.button("Se déconnecter"):
+        st.session_state.clear()
+        st.rerun()
     st.divider()
 
     # ═════════════════════════════════════════════════════════════════════════

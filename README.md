@@ -10,6 +10,16 @@ dans **Supabase** :
 | Tournées enregistrées | `tournees` | bouton « 💾 Enregistrer », puis sauvegarde automatique |
 | Stock du parc | `stock` | import Excel, « 💾 Appliquer les modifications », restauration |
 
+## Mot de passe de connexion
+
+L'application entière est protégée par un mot de passe d'équipe, transmis en
+interne. Il n'est jamais écrit dans le dépôt (public) : seule son empreinte
+PBKDF2-SHA256 salée figure dans `tournees.py` (constantes `ACCES_SEL` et
+`ACCES_EMPREINTE`, section « MOT DE PASSE DE CONNEXION »). Pour le changer,
+lancez la commande indiquée en commentaire juste au-dessus, puis remplacez ces
+deux lignes par celles qu'elle affiche. Le bouton « Se déconnecter » de la
+barre latérale ferme la session.
+
 ## Mise en place de Supabase (une seule fois)
 
 1. Créez un projet sur <https://supabase.com> (région Europe conseillée).
