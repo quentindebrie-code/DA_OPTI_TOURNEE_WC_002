@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optimiseur de Tournées</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚚</text></svg>">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- ── Connexion ──────────────────────────────────────────────────────── -->
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="card login-card" novalidate>
+      <div class="brand"><span aria-hidden="true">🚚</span> Optimiseur de Tournées</div>
+      <h1>Connexion</h1>
+      <label>E-mail<input type="email" name="email" autocomplete="username" required></label>
+      <label>Mot de passe<input type="password" name="password" autocomplete="current-password" required></label>
+      <p class="form-error" id="login-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+      <button class="btn-link" type="button" id="forgot">Mot de passe oublié ?</button>
+    </form>
+    <form id="newpwd-form" class="card login-card" hidden>
+      <h1>Nouveau mot de passe</h1>
+      <label>Mot de passe (8 caractères min.)<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+      <p class="form-error" id="newpwd-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-block" type="submit">Enregistrer</button>
+    </form>
+  </section>
+
+  <!-- ── Application ────────────────────────────────────────────────────── -->
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span aria-hidden="true">🚚</span> Tournées WC</div>
+      <nav class="tabs" role="tablist">
+        <a href="#saisie" role="tab" data-view="saisie">📋 Saisie</a>
+        <a href="#clients" role="tab" data-view="clients">📇 Clients</a>
+        <a href="#tournee" role="tab" data-view="tournee">🗺️ Tournée</a>
+        <a href="#stock" role="tab" data-view="stock">📦 Stock</a>
+        <a href="#export" role="tab" data-view="export">📤 Export</a>
+        <a href="#carte" role="tab" data-view="carte">📍 Carte</a>
+      </nav>
+      <div class="user">
+        <span id="store-badge" class="badge"></span>
+        <span id="user-email" class="muted small"></span>
+        <button id="logout" class="btn btn-sm" hidden>Se déconnecter</button>
+      </div>
+    </header>
+    <div id="demo-banner" class="banner" hidden>
+      Mode démo : données fictives, enregistrées dans ce navigateur uniquement.
+      Renseignez <code>config.js</code> pour vous connecter à Supabase.
+      <button id="demo-reset" class="btn-link">Réinitialiser la démo</button>
+    </div>
+
+    <main>
+      <section id="view-saisie" class="view" hidden></section>
+      <section id="view-clients" class="view" hidden></section>
+      <section id="view-tournee" class="view" hidden></section>
+      <section id="view-stock" class="view" hidden></section>
+      <section id="view-export" class="view" hidden></section>
+      <section id="view-carte" class="view" hidden></section>
+    </main>
+  </div>
+
+  <div id="boot" class="boot">Chargement…</div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
