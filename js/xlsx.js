@@ -2,19 +2,19 @@
 // feuille de tournée (avec récap matériel et fiches d'état des lieux).
 // Mise en forme identique à la version Streamlit (openpyxl → ExcelJS).
 
-import { loadExcel } from "./libs.js";
-import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursTexte, fmtDate } from "./util.js";
+import { loadExcel } from "./libs.js?v=202611161929";
+import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursTexte, fmtDate } from "./util.js?v=202611161929";
 import { ACTIONS_CATALOGUE, OPTIONS_CATALOGUE, STOPS_COLUMNS, ARTICLES_STOCK, PAUSE_DEJEUNER_MIN,
   ACTION_BG, PIECES_ETAT_LIEUX, ETAT_LIEUX_INTRO, ETAT_LIEUX_INTRO_GENERAL, cleanStock,
-  normalizeAction, normalizeProduit, normalizeOption, hhmmFromCell, fmtMin, fmtDuree, prestationParts } from "./metier.js";
-import { pauseSlot } from "./optim.js";
+  normalizeAction, normalizeProduit, normalizeOption, hhmmFromCell, fmtMin, fmtDuree, prestationParts } from "./metier.js?v=202611161929";
+import { pauseSlot } from "./optim.js?v=202611161929";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const argb = (hex) => "FF" + hex.replace("#", "").toUpperCase();
 const fill = (hex) => ({ type: "pattern", pattern: "solid", fgColor: { argb: argb(hex) } });
 const thin = { style: "thin", color: { argb: "FFCCCCCC" } };
 const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
-const HDR_FILL = fill("1F4E79");
+const HDR_FILL = fill("0A6D25");
 const HDR_FONT = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
 const CENTER = { horizontal: "center", vertical: "middle", wrapText: true };
 const LEFT = { horizontal: "left", vertical: "middle", wrapText: true };
@@ -35,7 +35,7 @@ function title(ws, r, text, lastCol, size = 15) {
   ws.mergeCells(r, 1, r, lastCol);
   const c = ws.getCell(r, 1);
   c.value = text;
-  c.font = { bold: true, size, color: { argb: "FF1F4E79" } };
+  c.font = { bold: true, size, color: { argb: "FF0A6D25" } };
   c.alignment = CENTER;
   ws.getRow(r).height = 28;
 }
@@ -66,8 +66,10 @@ function cellValue(v) {
 async function readWorkbook(file) {
   const ExcelJS = await loadExcel();
   const wb = new ExcelJS.Workbook();
+  const ext = (file.name || "").split(".").pop().toLowerCase();
+  if (["xls", "csv", "ods"].includes(ext)) throw new Error(`Format .${ext} non pris en charge : dans Excel, choisissez Fichier > Enregistrer sous > Classeur Excel (.xlsx), puis importez ce fichier.`);
   try { await wb.xlsx.load(await file.arrayBuffer()); }
-  catch (e) { throw new Error("Fichier illisible : " + e.message); }
+  catch { throw new Error("Ce fichier n'a pas pu être lu. Vérifiez qu'il s'agit bien d'un classeur Excel (.xlsx) non protégé."); }
   return wb.worksheets.map((ws) => {
     const rows = [];
     ws.eachRow({ includeEmpty: true }, (row, n) => {
@@ -113,7 +115,7 @@ export async function exportStopsExcel(stops, tourDate, driver) {
   });
 
   const nc = STOPS_COLUMNS.length;
-  title(ws, 1, "SAISIE DE TOURNÉE – DELDOSSI ASSAINISSEMENT", nc);
+  title(ws, 1, "SAISIE DE TOURNÉE - DELDOSSI ASSAINISSEMENT", nc);
   const sous = [];
   if (tourDate) sous.push(`Date : ${fmtDate(tourDate)}`);
   if (driver) sous.push(`Chauffeur : ${driver}`);
@@ -153,7 +155,7 @@ export async function exportStopsExcel(stops, tourDate, driver) {
   // Notice
   wn.mergeCells("A1:C1");
   wn.getCell("A1").value = "NOTICE DE SAISIE – TOURNÉE";
-  wn.getCell("A1").font = { bold: true, size: 14, color: { argb: "FF1F4E79" } };
+  wn.getCell("A1").font = { bold: true, size: 14, color: { argb: "FF0A6D25" } };
   header(wn, 3, ["Colonne", "Statut", "Explication"]);
   const notice = [
     ["Adresse", "OBLIGATOIRE", "Adresse complète avec code postal et ville. Ex : Place d'Hautpoul 81600 Gaillac. Une ligne sans adresse est ignorée à l'import."],
@@ -176,7 +178,7 @@ export async function exportStopsExcel(stops, tourDate, driver) {
   });
   let r = 4 + notice.length + 1;
   wn.getCell(r, 1).value = "EXEMPLE";
-  wn.getCell(r, 1).font = { bold: true, size: 12, color: { argb: "FF1F4E79" } };
+  wn.getCell(r, 1).font = { bold: true, size: 12, color: { argb: "FF0A6D25" } };
   r++;
   wn.mergeCells(r, 1, r, 3);
   wn.getCell(r, 1).value = "Déposer | WC chimique | Lave-main | Vert | 2 | Mairie de Gaillac | Place d'Hautpoul 81600 Gaillac | 40 | 09:00 | (vide) | Code portail 1234";
@@ -315,7 +317,7 @@ export async function exportStockExcel(stock, projete = null, majDate = "") {
     r++;
     const ti = rows.reduce((n, x) => n + x.installes, 0), ts = rows.reduce((n, x) => n + x.en_stock, 0);
     writeRow(ws, r, ["TOTAL", "", ti, ts, ti + ts]);
-    styleRange(ws, r, 1, 5, { font: { bold: true }, border: BORDER, fill: fill("DCE6F1") });
+    styleRange(ws, r, 1, 5, { font: { bold: true }, border: BORDER, fill: fill("D2FFE1") });
     for (let c = 1; c <= 5; c++) ws.getCell(r, c).alignment = c <= 2 ? LEFT : CENTER;
     widths(ws, [30, 14, 12, 12, 12]);
   };
@@ -371,12 +373,12 @@ function etatLieuxBlock(ws, r, o) {
   ws.getCell(r, 1).alignment = { horizontal: "left", vertical: "top", wrapText: true };
   ws.getRow(r).height = 46;
   r += 2;
-  header(ws, r, ["N° Article", "Désignation", "☑ Bon état", "☒ À remplacer", "Qté à commander", "Observations"], 22);
+  header(ws, r, ["N° Article", "Désignation", "Bon état", "À remplacer", "Qté à commander", "Observations"], 22);
   for (const [zone, pieces] of PIECES_ETAT_LIEUX) {
     r++;
     ws.mergeCells(r, 1, r, 6);
-    Object.assign(ws.getCell(r, 1), { value: zone, fill: fill("DCE6F1"), border: BORDER,
-      font: { bold: true, color: { argb: "FF1F4E79" }, size: 10 }, alignment: { horizontal: "left", vertical: "middle" } });
+    Object.assign(ws.getCell(r, 1), { value: zone, fill: fill("D2FFE1"), border: BORDER,
+      font: { bold: true, color: { argb: "FF0A6D25" }, size: 10 }, alignment: { horizontal: "left", vertical: "middle" } });
     for (const [ref, desig] of pieces) {
       r++;
       writeRow(ws, r, [ref, desig, "☐", "☐", "", ""]);
@@ -419,13 +421,15 @@ export async function exportTourneeExcel(res, tourDate, driver) {
   title(ws, 1, `FEUILLE DE TOURNÉE – ${fmtDate(tourDate)}`, 15);
   const recap = [
     ["Chauffeur", driver || "—"], ["Dépôt de départ", res.depot_depart_addr], ["Dépôt de retour", res.depot_retour_addr],
-    ["Ordre des arrêts", res.is_manual ? "Ordre personnalisé manuellement (prioritaire sur l'optimisation)" : "Ordre optimisé automatiquement"],
+    ["Ordre des arrêts", res.is_manual ? "Ordre personnalisé" : "Ordre optimisé"],
     ["Distance totale", `${res.distance_km.toFixed(1)} km`], ["Durée estimée", fmtDuree(res.duration_min)],
     ["Carburant estimé", `${res.fuel_liters.toFixed(1)} L  (${res.fuel_cost.toFixed(2)} €)`],
     ["Pause déjeuner", pause ? `${PAUSE_DEJEUNER_MIN} min incluse` : "Non comptée"],
-    ["Gain optimisation", `${res.km_saved.toFixed(1)} km – ${Math.round(res.time_saved_min)} min`],
+    ["Optimisation", res.km_saved == null || res.is_manual ? "—" : res.km_saved >= 0
+      ? `${res.km_saved.toFixed(1).replace(".", ",")} km économisés par rapport à l'ordre de saisie`
+      : `${Math.abs(res.km_saved).toFixed(1).replace(".", ",")} km de plus, pour tenir les créneaux`],
   ];
-  if (res.is_manual && !res.recalc_ok) recap.push(["⚠️ Kilométrage", "Service de calcul d'itinéraire indisponible : distance et durée sont celles de l'ordre optimisé. L'ordre des arrêts ci-dessous est bien l'ordre manuel."]);
+  if (res.is_manual && !res.recalc_ok) recap.push(["Kilométrage", "Distance de l'ordre optimisé (trajet non recalculé)."]);
   let r = 1;
   for (const [l, v] of recap) {
     r++;
@@ -437,7 +441,7 @@ export async function exportTourneeExcel(res, tourDate, driver) {
   }
   r += 2;
   header(ws, r, ["Ordre", "Action", "Produit", "Option", "Couleur", "Qté", "Nom du client", "Adresse", "Durée (min)",
-    "Pas avant", "Pas après", "Arrivée", "Départ", "Observations", "✓ Fait"]);
+    "Pas avant", "Pas après", "Arrivée", "Départ", "Observations", "Fait"]);
   const stops = res.stops_ordered;
   stops.forEach((s, i) => {
     r++;
@@ -449,7 +453,7 @@ export async function exportTourneeExcel(res, tourDate, driver) {
       cell.alignment = c === 8 || c === 14 ? LEFT : CENTER;
     }
     if (s.violated) ws.getCell(r, 12).font = { bold: true, color: { argb: "FFDC3545" } };
-    if (s.couleur) ws.getCell(r, 5).font = { bold: true, color: { argb: "FF1F4E79" } };
+    if (s.couleur) ws.getCell(r, 5).font = { bold: true, color: { argb: "FF0A6D25" } };
     ws.getCell(r, 2).fill = fill(ACTION_BG[s.action] || "#F0F0F0");
     if (pause && i === res.pause_idx) {
       const [ps, pe] = pauseSlot(stops, i);
@@ -462,7 +466,7 @@ export async function exportTourneeExcel(res, tourDate, driver) {
     }
   });
   r++;
-  writeRow(ws, r, ["↩", "Retour dépôt", "", "", "", "", "", res.depot_retour_addr, "", "", "", fmtMin(res.return_min), "", "", ""]);
+  writeRow(ws, r, ["", "Retour dépôt", "", "", "", "", "", res.depot_retour_addr, "", "", "", fmtMin(res.return_min), "", "", ""]);
   for (let c = 1; c <= 15; c++) Object.assign(ws.getCell(r, c), { fill: fill("FFF3CD"), font: { bold: true },
     border: BORDER, alignment: c === 8 || c === 14 ? LEFT : CENTER });
   widths(ws, [8, 14, 16, 14, 10, 6, 22, 44, 12, 12, 12, 12, 12, 30, 8]);

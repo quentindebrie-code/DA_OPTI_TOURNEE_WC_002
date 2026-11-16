@@ -5,27 +5,28 @@ Application HTML/JavaScript **sans serveur** : le navigateur parle directement
 partage la même base Supabase que l'application Streamlit : les deux peuvent
 tourner en parallèle pendant la migration.
 
-Toutes les fonctions de la version Streamlit sont reprises :
+Conçue d'abord pour le téléphone (barre de navigation en bas, « Préparer » au centre),
+avec une version grand écran soignée. Design « verre » du groupe Hympyr aux couleurs vertes
+de Deldossi Assainissement, police Poppins.
 
-| Onglet | Contenu |
+| Écran | Contenu |
 |---|---|
-| 📋 Saisie | tournées enregistrées (sauvegarde automatique), paramètres, import / export / modèle Excel, tableau relié à la base client, barème des durées, contrôle de stock en direct, optimisation |
-| 📇 Clients | fiches, points de livraison, vérification d'adresse |
-| 🗺️ Tournée | indicateurs, carte de l'itinéraire, réordonnancement par glisser-déposer ou ↑ ↓ |
-| 📦 Stock | import / export Excel, matrice article × couleur, détail modifiable, projection après tournée |
-| 📤 Export | feuille de tournée Excel et PDF (matériel, carte, consignes, fiches d'état des lieux) |
-| 📍 Carte | tournées enregistrées et points clients |
+| Accueil | reprise de la tournée en cours, avancement, chiffres du mois, raccourcis |
+| Préparer | tournées enregistrées, paramètres, arrêts (base client, import Excel), couleur automatique selon le stock, vérifications, bouton « Optimiser » |
+| Tournée | indicateurs, carte, ordre réorganisable, feuille de route PDF (avec logo) et Excel, mise à jour du stock une fois la tournée faite |
+| Clients | fiches et adresses de livraison, carte des clients |
+| Stock | état du parc, tableau article × couleur, corrections, impact de la tournée |
 
-Améliorations par rapport à la version Streamlit : la recherche d'ordre tient
-compte de la pause déjeuner et déplace aussi des arrêts isolés (moins de
-créneaux manqués), le dépôt de retour est intégré au calcul, le géocodage
-utilise le nouveau service officiel de la Base Adresse Nationale, et la saisie
-en cours survit au rechargement de la page.
+Le bouton d'assistance (en bas à droite) et le lien « Mot de passe oublié ? » envoient une
+demande à quentin.d@hympyr.fr : elle est enregistrée dans la table `tickets` de Supabase et
+transmise par e-mail via FormSubmit. **À la toute première demande, FormSubmit envoie un
+e-mail d'activation à cette adresse : il faut cliquer sur le lien qu'il contient pour que les
+envois suivants arrivent.**
 
 ## Essayer tout de suite (mode démo)
 
-`config.js` vide = mode démo, avec des données fictives conservées dans le
-navigateur.
+`config.js` vide, ou `?demo` ajouté à l'adresse = mode démo, avec des données fictives
+conservées dans le navigateur.
 
 ```bash
 python3 -m http.server 8765 -d web
@@ -69,10 +70,12 @@ compte dans *Authentication → Users*.
 ## Mettre en ligne gratuitement
 
 Le site est publié sur **GitHub Pages** depuis la branche `gh-pages` (copie du
-dossier `web/`). Pour republier après une modification :
+dossier `web/`). Pour republier après une modification, numéroter d'abord la version (évite
+qu'un navigateur mélange anciens et nouveaux fichiers), puis pousser :
 
 ```bash
-git subtree push --prefix web origin gh-pages
+python3 outils/version-web.py
+git commit -am "Nouvelle version" && git subtree push --prefix web origin gh-pages
 ```
 
 Tout hébergeur statique convient aussi, par exemple **Cloudflare Pages** :
@@ -89,20 +92,16 @@ gratuit et le site ne se met jamais en veille.
 
 ```
 web/
-├── index.html              structure de la page
-├── config.js               URL + clé publique Supabase (vide = démo)
-├── supabase_web_auth.sql   politiques d'accès (à exécuter une fois)
-├── css/app.css             styles (clair / sombre, mobile)
+├── index.html · config.js · supabase_web_auth.sql
+├── assets/logo-deldossi-vert.svg
+├── css/app.css            design system (verre, couleurs, animations, mobile d'abord)
 └── js/
-    ├── app.js              connexion, onglets, état partagé
-    ├── store.js            accès aux données (Supabase / démo)
-    ├── util.js             constantes métier, géocodage, utilitaires
-    ├── state.js            état de la tournée, brouillon, sauvegarde auto
-    ├── metier.js           barème, stock, normalisation, textes
-    ├── optim.js            OSRM, plus proche voisin + 2-opt, créneaux, pause
-    ├── xlsx.js / pdf.js    imports et exports Excel / PDF
-    ├── saisie.js, clients.js, tournee.js, stock.js, export.js, carte.js
-    └── libs.js             chargement à la demande (ExcelJS, jsPDF, SortableJS)
+    ├── app.js             connexion, navigation et transitions, chargement depuis le cache
+    ├── accueil.js · saisie.js · tournee.js · clients.js · stock.js   les écrans
+    ├── state.js · store.js · metier.js · optim.js                    données et calculs
+    ├── xlsx.js · pdf.js   exports (le PDF intègre le logo)
+    ├── ticket.js          assistance
+    └── util.js · icons.js · logo.js · libs.js
 ```
 
 Le géocodage utilise le service officiel de la Base Adresse Nationale

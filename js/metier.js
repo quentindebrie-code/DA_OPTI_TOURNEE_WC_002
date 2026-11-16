@@ -1,7 +1,7 @@
 // Règles métier portées de tournees.py : barème des durées, parc / stock,
 // normalisation des saisies, consignes et nomenclature d'état des lieux.
 
-import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursArret, couleursTexte } from "./util.js";
+import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursArret, couleursTexte } from "./util.js?v=202611161929";
 
 export const ACTIONS_CATALOGUE = ["Nettoyer", "Déposer", "Retirer", "Chargement", "Déchargement"];
 export const OPTIONS_CATALOGUE = ["Lave-main", "Urinoir"];
@@ -11,8 +11,8 @@ export const STOPS_COLUMNS = ["Action", "Produit", "Option", "Couleur", "Quantit
 export const PAUSE_DEJEUNER_MIN = 30;
 
 // Couleurs de fond (cartes, Excel, PDF) et de bordure par action
-export const ACTION_BG = { "Nettoyer": "#AEC6E8", "Déposer": "#B7E5B4", "Retirer": "#F4B8C1",
-  "Chargement": "#D4B8E0", "Déchargement": "#FFE0B2" };
+export const ACTION_BG = { "Nettoyer": "#D6E8F8", "Déposer": "#CFF5DA", "Retirer": "#E6DCF5",
+  "Chargement": "#CDEEF0", "Déchargement": "#F6E1CC" };
 
 export const COULEUR_HEX = { "Vert": "#2E7D32", "Jaune": "#F9A825", "Rose": "#EC407A",
   "Bleu": "#1E88E5", "Orange": "#EF6C00", "Crème": "#D9C89E", "Blanc": "#FFFFFF", "Gris": "#9E9E9E" };
@@ -311,7 +311,6 @@ export function qtyLabel(s) {
   if (!produit) return `${q} × ?`;
   let label = `${q} × ${produit}`;
   if (produit === "WC chimique" && option) label += ` + ${q} × ${option}`;
-  if (couleur) label += ` — couleur ${couleur}`;
   return label;
 }
 
@@ -387,4 +386,49 @@ export function prestationParts(stop) {
   let pl = produit ? `${q} × ${produit}` : "—";
   if (produit && couleur) pl += `  (couleur : ${couleur})`;
   return [pl, option ? `${q} × ${option}` : "—"];
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Couleur automatique selon le stock réel
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Pour chaque arrêt dont la couleur est vide, propose la ou les couleurs à utiliser :
+ * - sortie de matériel (Déposer, et Déchargement si les manutentions comptent) :
+ *   couleurs les mieux dotées au dépôt (stock « En stock ») ;
+ * - retour (Retirer, et Chargement) : couleurs les plus installées chez les clients.
+ * Les couleurs choisies à la main sont réservées en premier. Renvoie un tableau de
+ * chaînes (« Vert, Bleu ») aligné sur `stops` ; "" quand aucune proposition.
+ */
+export function allouerCouleurs(stops, stockRows, inclureManutentions = false) {
+  const bareme = inclureManutentions ? MVT_ETENDU : MVT;
+  const stock = cleanStock(stockRows).map((r) => ({ ...r }));
+  const prendre = (article, couleurs, q, champ) => {
+    let reste = q;
+    const choisies = [];
+    const lignes = stock.filter((r) => r.article === article && (!couleurs || couleurs.includes(r.couleur)) && r.couleur)
+      .sort((a, b) => b[champ] - a[champ] || ordreCouleur(a.couleur) - ordreCouleur(b.couleur));
+    for (const l of lignes) {
+      if (reste <= 0) break;
+      const part = Math.min(reste, l[champ]);
+      if (part > 0) { l[champ] -= part; reste -= part; choisies.push(l.couleur); }
+    }
+    // Stock insuffisant : on propose la couleur la plus courante pour cet article.
+    if (!choisies.length && lignes.length) choisies.push(lignes[0].couleur);
+    return choisies;
+  };
+  const sensDe = (s) => bareme[String(s["Action"] || "").trim()] || 0;
+  const champDe = (sens) => (sens < 0 ? "en_stock" : "installes");
+  const ok = (s) => String(s["Adresse"] || "").trim() && articleKey(s["Produit"], s["Option"]);
+  // 1) réservation des couleurs saisies à la main
+  for (const s of stops) {
+    const sens = sensDe(s);
+    if (!ok(s) || !sens || !String(s["Couleur"] || "").trim()) continue;
+    prendre(articleKey(s["Produit"], s["Option"]), couleursArret(s["Couleur"]), Math.max(1, parseInt(s["Quantité"], 10) || 1), champDe(sens));
+  }
+  // 2) proposition automatique pour les cellules vides
+  return stops.map((s) => {
+    const sens = sensDe(s);
+    if (!ok(s) || !sens || String(s["Couleur"] || "").trim()) return "";
+    return couleursTexte(prendre(articleKey(s["Produit"], s["Option"]), null, Math.max(1, parseInt(s["Quantité"], 10) || 1), champDe(sens)));
+  });
 }

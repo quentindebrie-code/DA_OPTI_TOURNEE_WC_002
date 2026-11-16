@@ -1,183 +1,292 @@
-// Onglet « Tournée optimisée » : indicateurs, carte de l'itinéraire, ordre des
-// arrêts réorganisable par glisser-déposer (recalcul des horaires et du tracé).
-/* global L */
+// Écran « Tournée » : résultat de l'optimisation, carte, ordre réorganisable,
+// feuille de route (PDF / Excel) et mise à jour du stock une fois la tournée faite.
 
-import { ACTION_COLORS, esc, toast } from "./util.js";
-import { PAUSE_DEJEUNER_MIN, ACTION_BG, COULEUR_HEX, COULEUR_TEXTE, fmtMin, fmtDuree } from "./metier.js";
-import { S, on, emit, activeResult, resultatObsolete } from "./state.js";
-import { recalcManuel, pauseSlot } from "./optim.js";
-import { loadSortable } from "./libs.js";
-
-const pin = (label, color, cls = "") => L.divIcon({ className: "",
-  html: `<div class="pin ${cls}" style="--c:${color}"><span>${esc(label)}</span></div>`,
-  iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -28] });
+import { icon } from "./icons.js?v=202611161929";
+import { ACTION_COLORS, PASTILLE, esc, toast, confirmer, fmtDate, withBusy, confettis } from "./util.js?v=202611161929";
+import { PAUSE_DEJEUNER_MIN, fmtMin, fmtDuree, besoinsTournee, projeterStock } from "./metier.js?v=202611161929";
+import { S, on, emit, activeResult, resultatObsolete, stopsEffectifs, saveStock } from "./state.js?v=202611161929";
+import { recalcLocal, recalcManuel, pauseSlot } from "./optim.js?v=202611161929";
+import { loadSortable, loadLeaflet, telecharger, XLSX_MIME, loadPdf, loadExcel } from "./libs.js?v=202611161929";
 
 export function pastilles(couleurs) {
-  return String(couleurs || "").split(",").map((c) => c.trim()).filter(Boolean).map((c) =>
-    `<span class="pill" style="background:${COULEUR_HEX[c] || "#E0E0E0"};color:${COULEUR_TEXTE[c] || "#fff"}">${esc(c)}</span>`).join(" ");
+  return String(couleurs || "").split(",").map((c) => c.trim()).filter(Boolean)
+    .map((c) => `<span class="mini"><i class="pastille" style="--pc:${PASTILLE[c] || "#ccc"}"></i>${esc(c)}</span>`).join(" ");
 }
+const km = (v) => `${Math.abs(v).toFixed(1).replace(".", ",")} km`;
 
 export function initTournee(root, ctx) {
-  let map = null, layer = null, sortable = null, busy = false, dirty = true;
+  let L = null, map = null, layer = null, markers = [], dirty = true;
+  let reorderSeq = 0;
+  let prevKpi = null;
 
-  function ensureMap() {
+  let fitFor = null;
+  async function ensureMap(r) {
     const el = root.querySelector("#route-map");
     if (!el) return;
-    if (map && map.getContainer() === el) { map.invalidateSize(); return; }
-    map?.remove();
-    map = L.map(el).setView([43.75, 1.68], 9);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
-    layer = L.layerGroup().addTo(map);
+    // La carte existante est réutilisée d'un rendu à l'autre (pas de clignotement).
+    if (map && map.getContainer() !== el && !map.getContainer().isConnected) {
+      el.replaceWith(map.getContainer());
+      map.invalidateSize();
+      draw(r, fitFor !== S.result);
+      fitFor = S.result;
+      return;
+    }
+    try { L = L || await loadLeaflet(); } catch { el.innerHTML = `<p class="empty">Carte indisponible hors connexion.</p>`; return; }
+    if (!root.querySelector("#route-map")) return;
+    if (!map || map.getContainer() !== el) {
+      map?.remove();
+      map = L.map(el, { zoomControl: false }).setView([43.75, 1.68], 9);
+      L.control.zoom({ position: "topright" }).addTo(map);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+    }
+    draw(r, true);
+    fitFor = S.result;
   }
 
-  function drawMap(r) {
-    ensureMap();
+  const pin = (label, color, cls = "") => L.divIcon({ className: "", iconSize: [32, 32], iconAnchor: [16, 16], popupAnchor: [0, -14],
+    html: `<div class="pin ${cls}" style="--c:${color}"><span>${label}</span></div>` });
+
+  function draw(r, fit) {
     if (!map) return;
     layer.clearLayers();
-    const pts = [];
+    markers = [];
     if (r.geometry?.length) {
-      L.polyline(r.geometry, { color: "#fff", weight: 8, opacity: 0.8 }).addTo(layer);
-      L.polyline(r.geometry, { color: "#1f4e79", weight: 4.5, opacity: 0.9 }).addTo(layer);
-      pts.push(...r.geometry);
+      L.polyline(r.geometry, { color: "#fff", weight: 9, opacity: .85 }).addTo(layer);
+      L.polyline(r.geometry, { color: "#038D29", weight: 5, opacity: r.route_pending ? .45 : .95, dashArray: r.route_pending ? "8 10" : null }).addTo(layer);
     }
+    L.marker(r.depot_coords, { icon: pin(icon("depot"), "#002C09", "pin-depot"), zIndexOffset: 1000 })
+      .bindPopup(`<b>Dépôt de départ</b><br>${esc(r.depot_depart_addr)}`).addTo(layer);
     const same = r.depot_coords[0] === r.depot_retour_coords[0] && r.depot_coords[1] === r.depot_retour_coords[1];
-    L.marker(r.depot_coords, { icon: pin("⌂", "#b45309", "pin-depot"), zIndexOffset: 1000 })
-      .bindPopup(`<b>Dépôt – ${same ? "Départ / retour" : "Départ"}</b><br>${esc(r.depot_depart_addr)}`).addTo(layer);
-    if (!same) L.marker(r.depot_retour_coords, { icon: pin("R", "#b91c1c", "pin-depot"), zIndexOffset: 1000 })
-      .bindPopup(`<b>Dépôt – Retour</b><br>${esc(r.depot_retour_addr)}`).addTo(layer);
-    for (const s of r.stops_ordered) {
-      L.marker([s.lat, s.lon], { icon: pin(s.order_num, ACTION_COLORS[s.action] || "#555") })
-        .bindPopup(`<b>Arrêt ${s.order_num}</b> · ${esc(s.action)}<br>${s.client ? `<b>${esc(s.client)}</b><br>` : ""}
-          📦 ${esc(s.quantity)}<br>📍 ${esc(s.address)}<br>🕐 Arrivée ${fmtMin(s.arrival_min)}${s.violated ? " ⚠️" : ""}`)
-        .bindTooltip(`${s.order_num}. ${s.action} – ${s.client || s.address}`).addTo(layer);
-      pts.push([s.lat, s.lon]);
-    }
-    pts.push(r.depot_coords);
-    map.fitBounds(L.latLngBounds(pts), { padding: [30, 30] });
+    if (!same) L.marker(r.depot_retour_coords, { icon: pin(icon("flag"), "#002C09", "pin-depot"), zIndexOffset: 1000 })
+      .bindPopup(`<b>Dépôt de retour</b><br>${esc(r.depot_retour_addr)}`).addTo(layer);
+    r.stops_ordered.forEach((s, k) => {
+      const m = L.marker([s.lat, s.lon], { icon: pin(s.order_num, ACTION_COLORS[s.action] || "#038D29"), riseOnHover: true })
+        .bindPopup(`<b>${s.order_num}. ${esc(s.client || s.address)}</b><br>${esc(s.action)} · ${esc(s.quantity)}<br>Arrivée ${fmtMin(s.arrival_min)}`)
+        .addTo(layer);
+      m.on("mouseover", () => surligner(k, true));
+      m.on("mouseout", () => surligner(k, false));
+      m.on("click", () => root.querySelector(`.timeline li[data-pos="${k}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+      markers[k] = m;
+    });
+    if (fit) map.fitBounds(L.latLngBounds([r.depot_coords, r.depot_retour_coords, ...r.stops_ordered.map((s) => [s.lat, s.lon])]), { padding: [40, 40] });
   }
 
-  function stopCard(s, k) {
-    const tw = [s.tw_early != null && `⏰ Pas avant ${fmtMin(s.tw_early)}`, s.tw_late != null && `⏰ Pas après ${fmtMin(s.tw_late)}`].filter(Boolean).join(" · ");
-    return `<li class="stop-card" data-k="${k}" style="--bg:${ACTION_BG[s.action] || "#f0f0f0"};--bd:${ACTION_COLORS[s.action] || "#999"}">
-      <span class="handle" title="Glisser pour réorganiser" aria-hidden="true">⋮⋮</span>
-      <div class="sc-body">
-        <div><b>#${s.order_num} ${esc(s.action)}</b>${s.client ? " · " + esc(s.client) : ""}</div>
-        <div class="small">📍 ${esc(s.address)}</div>
-        <div class="small">📦 ${esc(s.quantity)} ${pastilles(s.couleur)}</div>
-        ${tw ? `<div class="small muted">${tw}</div>` : ""}
-        <div class="small ${s.violated ? "err" : "ok"}"><b>${s.violated ? "⚠️" : "🕐"} Arrivée ${fmtMin(s.arrival_min)}</b>
-          ${s.wait_min > 0.5 ? `<span class="muted">(attente ${Math.round(s.wait_min)} min)</span>` : ""}
-          <span class="muted">· intervention ${s.duration_min} min → départ ${fmtMin(s.departure_min)}</span></div>
-        ${s.observations ? `<div class="small muted">📝 ${esc(s.observations)}</div>` : ""}
-      </div>
-      <div class="sc-move">
-        <button class="btn btn-icon btn-sm" data-move="-1" aria-label="Monter l'arrêt ${s.order_num}">↑</button>
-        <button class="btn btn-icon btn-sm" data-move="1" aria-label="Descendre l'arrêt ${s.order_num}">↓</button>
-      </div>
-    </li>`;
+  function surligner(k, onOff) {
+    root.querySelector(`.timeline li[data-pos="${k}"] .stop-card`)?.classList.toggle("hl", onOff);
+    markers[k]?.getElement()?.classList.toggle("pin-active", onOff);
+  }
+
+  function stopCard(s, k, pos) {
+    const col = ACTION_COLORS[s.action] || "#038D29";
+    const tw = [s.tw_early != null && `après ${fmtMin(s.tw_early)}`, s.tw_late != null && `avant ${fmtMin(s.tw_late)}`].filter(Boolean).join(", ");
+    return `<li data-k="${k}" data-pos="${pos}" style="--nc:${col}"><span class="node">${s.order_num}</span>
+      <div class="stop-card${s.violated ? " violated" : ""}">
+        <span class="handle" aria-hidden="true">${icon("grip")}</span>
+        <div class="body">
+          <div class="t">${esc(s.client || s.address)} <span class="act-tag">${esc(s.action)}</span></div>
+          <div class="line">${icon("pin")}<span>${esc(s.address)}</span></div>
+          <div class="line">${icon("stock")}<span>${esc(s.quantity)}</span></div>
+          ${s.couleur ? `<div class="line">${pastilles(s.couleur)}</div>` : ""}
+          <div class="line">${icon("clock")}<span><span class="time">${fmtMin(s.arrival_min)}</span>${s.violated ? " · hors créneau" : ""}${s.wait_min > 0.5 ? ` · ${Math.round(s.wait_min)} min d'attente` : ""} · ${s.duration_min} min sur place${tw ? ` · ${tw}` : ""}</span></div>
+          ${s.observations ? `<div class="line">${icon("note")}<span>${esc(s.observations)}</span></div>` : ""}
+        </div>
+        <div class="move">
+          <button class="btn btn-sm btn-icon" data-move="-1" aria-label="Monter l'arrêt ${s.order_num}">${icon("chevron-up")}</button>
+          <button class="btn btn-sm btn-icon" data-move="1" aria-label="Descendre l'arrêt ${s.order_num}">${icon("chevron-down")}</button>
+        </div>
+      </div></li>`;
+  }
+
+  function kpi(id, label, val, sub = "", main = false) {
+    const changed = prevKpi && prevKpi[id] !== undefined && prevKpi[id] !== val;
+    return `<div class="kpi${main ? " main" : ""}${changed ? " changed" : ""}"><span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
   }
 
   function render() {
     const r = activeResult();
     if (!r) {
-      root.innerHTML = `<div class="card placeholder"><h3>🗺️ Aucune tournée optimisée</h3>
-        <p>Saisissez vos arrêts dans l'onglet <a href="#saisie">📋 Saisie</a> puis cliquez sur <b>🚀 Optimiser la tournée</b>.</p></div>`;
+      root.innerHTML = `<div class="page-head"><div><span class="eyebrow">Étape 2</span><h1>Tournée</h1></div></div>
+        <section class="glass empty-stops">${icon("route", "i-hero")}<h2>Pas encore de tournée calculée</h2>
+          <p class="muted">Préparez vos arrêts puis lancez l'optimisation.</p>
+          <div class="row"><a class="btn btn-primary" href="#saisie">${icon("plus")}<span>Préparer une tournée</span></a></div></section>`;
       map?.remove(); map = null;
       return;
     }
     const ref = S.result;
-    const totalMin = r.return_min - r.depart_min;
-    const interv = r.stops_ordered.reduce((n, s) => n + (s.duration_min || 0), 0);
-    const trajet = Math.max(0, Math.round(r.duration_min - (r.pause_dejeuner ? PAUSE_DEJEUNER_MIN : 0)));
-    // L'ordre manuel courant exprimé en indices de l'ordre optimisé
-    const order = S.manual?.manual_order || ref.stops_ordered.map((_, i) => i);
     const stops = r.stops_ordered;
-    const pauseIdx = r.pause_idx;
-    const items = stops.map((s, i) => stopCard(s, order[i]) + (r.pause_dejeuner && i === pauseIdx
-      ? (() => { const [a, b] = pauseSlot(stops, i); return `<li class="stop-card pause-card" data-fixed>🍽️ <b>Pause déjeuner — ${PAUSE_DEJEUNER_MIN} min</b><br><span class="small">Créneau : ${a ? `${a} – ${b}` : `${PAUSE_DEJEUNER_MIN} min`}</span></li>`; })()
-      : "")).join("");
-
+    const order = S.manual?.manual_order || ref.stops_ordered.map((_, i) => i);
+    const viol = stops.filter((s) => s.violated);
+    const total = r.return_min - r.depart_min;
+    const interv = stops.reduce((n, s) => n + (s.duration_min || 0), 0);
+    const ecart = S.manual ? { km: ref.distance_km - r.distance_km } : null;
+    const vals = {
+      dep: fmtMin(r.depart_min), ret: fmtMin(r.return_min), tot: fmtDuree(total),
+      nb: String(stops.length), dist: `${r.distance_km.toFixed(1).replace(".", ",")} km`, traj: fmtDuree(r.duration_min - (r.pause_dejeuner ? PAUSE_DEJEUNER_MIN : 0)),
+      fuel: `${r.fuel_liters.toFixed(1).replace(".", ",")} L`, cout: `${r.fuel_cost.toFixed(2).replace(".", ",")} €`,
+      gain: ecart ? (Math.abs(ecart.km) < .05 ? "0 km" : `${ecart.km < 0 ? "+" : "−"}${km(ecart.km)}`)
+        : ref.km_saved == null ? "—" : ref.km_saved >= 0 ? km(ref.km_saved) : `+${km(ref.km_saved)}`,
+    };
+    let items = "";
+    stops.forEach((s, i) => {
+      items += stopCard(s, order[i], i);
+      if (r.pause_dejeuner && i === r.pause_idx) {
+        const [a, b] = pauseSlot(stops, i);
+        items += `<li data-fixed><span class="node pause">${icon("lunch")}</span><div class="stop-card fixed"><div class="body"><div class="t">Pause déjeuner</div>
+          <div class="line">${icon("clock")}<span>${a ? `${a} – ${b}` : `${PAUSE_DEJEUNER_MIN} min`}</span></div></div></div></li>`;
+      }
+    });
+    const T = S.tournee;
     root.innerHTML = `
       <div class="page-head">
-        <div><h2>🗺️ Tournée optimisée ${S.manual ? '<span class="badge badge-warn">✏️ Ordre manuel</span>' : ""}</h2>
-          <p class="muted">Départ : <b>${esc(S.params.depotDepart)}</b> · Retour : <b>${esc(S.params.depotRetour)}</b></p></div>
-        <div class="head-actions"><a class="btn" href="#export">📤 Exporter</a></div>
-      </div>
-      ${resultatObsolete() ? `<p class="note warn">⚠️ La saisie ou les règles ont changé depuis cette optimisation. <a href="#saisie">Relancez l'optimisation</a> pour mettre la tournée à jour.</p>` : ""}
-      ${(S.optimMessages || []).filter((m) => m.kind !== "ok" || !S.manual).map((m) => `<p class="note ${m.kind}">${esc(m.text)}</p>`).join("")}
-      ${r.is_manual && !r.recalc_ok ? `<p class="note warn">⚠️ Le service d'itinéraire n'a pas répondu : l'ordre est bien le vôtre, mais la distance et le tracé sont ceux de l'ordre optimisé.</p>` : ""}
-      <div class="kpis">
-        <div class="kpi"><span>📍 Arrêts</span><b>${stops.length}</b></div>
-        <div class="kpi"><span>🛣️ Distance</span><b>${r.distance_km.toFixed(1)} km</b></div>
-        <div class="kpi"><span>⏱️ Durée trajet</span><b>${fmtDuree(r.duration_min)}</b></div>
-        <div class="kpi"><span>⛽ Carburant</span><b>${r.fuel_liters.toFixed(1)} L</b></div>
-        <div class="kpi"><span>💶 Coût</span><b>${r.fuel_cost.toFixed(2)} €</b></div>
-        <div class="kpi"><span>⏳ Temps gagné</span><b>${Math.round(ref.time_saved_min)} min</b><small>−${ref.km_saved.toFixed(1)} km</small></div>
-        <div class="kpi"><span>🕖 Départ</span><b>${fmtMin(r.depart_min)}</b></div>
-        <div class="kpi"><span>🏁 Retour</span><b>${fmtMin(r.return_min)}</b></div>
-      </div>
-      <p class="note info">🗓️ <b>Durée totale : ${fmtDuree(totalMin)}</b> — dont ${trajet} min de trajet, ${interv} min d'interventions${
-        r.pause_dejeuner ? ` et ${PAUSE_DEJEUNER_MIN} min de pause déjeuner 🍽️` : ". ⛔ Aucune pause déjeuner comptée"}.</p>
-      ${ref.peri_affectes_nb ? `<p class="note info">🚦 Mode périphérique : <b>${ref.peri_affectes_nb} arrêt(s)</b> intra-rocade repoussé(s) hors des heures de pointe.</p>` : ""}
-      <div class="route-layout">
-        <div class="card map-wrap route-map-wrap"><div id="route-map" class="map"></div></div>
-        <div class="card order-pane">
-          <div class="row between"><h3>📋 Ordre des arrêts</h3>
-            ${S.manual ? `<button class="btn btn-sm" data-act="reset">↩️ Ordre optimisé</button>` : ""}</div>
-          <p class="small muted">↕️ Glissez les cartes (ou utilisez ↑ ↓) pour réorganiser : horaires, distance et tracé sont recalculés.</p>
-          <div class="stop-card depot-card"><b>🏭 Dépôt — Départ ${fmtMin(r.depart_min)}</b><br><span class="small">${esc(r.depot_depart_addr)}</span></div>
-          <ol class="stop-cards">${items}</ol>
-          <div class="stop-card depot-card"><b>🏁 Dépôt — Retour ${fmtMin(r.return_min)}</b><br><span class="small">${esc(r.depot_retour_addr)}</span></div>
-          <p class="small muted busy" hidden>🔄 Recalcul de l'itinéraire…</p>
+        <div><span class="eyebrow">Étape 2${S.manual ? " · ordre personnalisé" : ""}</span>
+          <h1>Tournée du ${esc(fmtDate(S.params.tourDate))}</h1>
+          <p>${S.params.driver ? esc(S.params.driver) + " · " : ""}${stops.length} arrêt${stops.length > 1 ? "s" : ""} · départ ${esc(S.params.depotDepart)}</p></div>
+        <div class="head-actions">
+          <button class="btn ${T.pdfAt && !resultatObsolete() ? "" : "btn-primary "}btn-lg" data-act="pdf">${icon("printer")}<span>${T.pdfAt && !resultatObsolete() ? "Réimprimer" : "Feuille de route"}</span></button>
+          <button class="btn btn-lg" data-act="xlsx">${icon("sheet")}<span>Excel</span></button>
         </div>
+      </div>
+      ${resultatObsolete() ? `<div class="note warn">${icon("alert")}<div>La saisie a changé depuis ce calcul.<div class="row"><button class="btn btn-sm" data-act="relancer">${icon("refresh")}<span>Recalculer</span></button></div></div></div>` : ""}
+      ${r.absents?.length ? `<div class="note warn">${icon("alert")}<div><b>${r.absents.length} arrêt${r.absents.length > 1 ? "s" : ""} hors tournée</b> (adresse introuvable) : ${r.absents.map((a) => esc(a.client || a.adresse)).join(", ")}. <a href="#saisie">Corriger</a></div></div>` : ""}
+      ${viol.length ? `<div class="note err">${icon("clock")}<div><b>${viol.length} créneau${viol.length > 1 ? "x" : ""} non tenu${viol.length > 1 ? "s" : ""}</b> : ${viol.map((s) => `arrêt ${s.order_num} (${esc(s.client || s.address)}) à ${fmtMin(s.arrival_min)}, prévu avant ${fmtMin(s.tw_late)}`).join(" · ")}</div></div>` : ""}
+      ${r.is_manual && !r.recalc_ok ? `<div class="note warn">${icon("alert")}<div>Trajet non recalculé (service indisponible) : distance et tracé correspondent à l'ordre optimisé.</div></div>` : ""}
+      ${T.pdfAt && !resultatObsolete() ? `<div class="done">${icon("check-circle")}<div style="flex:1"><b>Feuille de route prête</b>
+        <div class="small">${T.stockAt ? "Stock mis à jour. Bonne tournée !" : "Une fois la tournée faite, mettez le stock à jour en un geste."}</div></div>
+        ${T.stockAt ? "" : `<button class="btn btn-primary btn-sm" data-act="stock">${icon("box-check")}<span>Tournée effectuée</span></button>`}</div>` : ""}
+      <details class="kpi-details"${kpiOuverts ? " open" : ""}>
+        <summary><span class="kpi-sum"><b>${vals.dep} → ${vals.ret}</b> · ${vals.dist.replace(" ", "\u00a0")} · ${vals.cout.replace(" ", "\u00a0")}</span><span class="small muted">Détails</span>${icon("chevron-down", "chev")}</summary>
+      <div class="kpi-groups">
+        <section class="glass kpi-group"><h2 class="group-title">${icon("clock")}Horaires</h2>
+          <div class="kpis">${kpi("dep", "Départ", vals.dep)}${kpi("ret", "Retour", vals.ret, "", true)}${kpi("tot", "Journée", vals.tot, r.pause_dejeuner ? "pause incluse" : "sans pause")}</div></section>
+        <section class="glass kpi-group"><h2 class="group-title">${icon("route")}Itinéraire</h2>
+          <div class="kpis">${kpi("dist", "Distance", vals.dist, "", true)}${kpi("traj", "Conduite", vals.traj, `${interv} min sur place`)}</div></section>
+        <section class="glass kpi-group"><h2 class="group-title">${icon("fuel")}Coût</h2>
+          <div class="kpis">${kpi("fuel", "Carburant", vals.fuel)}${kpi("cout", "Coût", vals.cout, "", true)}${kpi("gain", ecart ? "Écart" : (ref.km_saved ?? 0) >= 0 ? "Économisés" : "Détour", vals.gain, ecart ? "vs ordre optimisé" : (ref.km_saved ?? 0) >= 0 ? "vs ordre de saisie" : "pour tenir les créneaux")}</div></section>
+      </div></details>
+      <div class="route-layout">
+        <section class="glass route-map"><div id="route-map" class="map" aria-label="Carte de la tournée"></div></section>
+        <section class="glass">
+          <div class="card-title">${icon("list")}<span>Ordre des arrêts</span>
+            ${S.manual ? `<button class="btn btn-sm btn-ghost push" data-act="reset">${icon("undo")}<span>Ordre optimisé</span></button>` : ""}</div>
+          <p class="small muted">Glissez une carte ou utilisez les flèches : les horaires suivent.</p>
+          <ol class="timeline">
+            <li data-fixed><span class="node depot">${icon("depot")}</span><div class="stop-card fixed"><div class="body"><div class="t">Départ ${fmtMin(r.depart_min)}</div><div class="line">${icon("pin")}<span>${esc(r.depot_depart_addr)}</span></div></div></div></li>
+            ${items}
+            <li data-fixed><span class="node depot">${icon("flag")}</span><div class="stop-card fixed"><div class="body"><div class="t">Retour ${fmtMin(r.return_min)}</div><div class="line">${icon("pin")}<span>${esc(r.depot_retour_addr)}</span></div></div></div></li>
+          </ol>
+          <p class="sr-only" role="status" aria-live="polite" data-live></p>
+        </section>
       </div>`;
-    drawMap(r);
+    prevKpi = vals;
+    const tl = root.querySelector(".timeline");
+    const cle = `${S.resultStopsHash}|${stops.length}`;
+    if (tl && cle === derniereCle) tl.classList.add("calm");   // pas de rejeu d'entrée après un réordonnancement
+    derniereCle = cle;
+    if (movedKey != null) {
+      root.querySelector(`.timeline li[data-k="${movedKey}"]`)?.classList.add("moved");
+      clearTimeout(movedTimer);
+      movedTimer = setTimeout(() => { movedKey = null; }, 1800);   // survit au second rendu (tracé réel)
+    }
+    root.querySelector(".kpi-details")?.addEventListener("toggle", (e) => { kpiOuverts = e.target.open; });
+    ensureMap(r);
     initSortable();
+    // Préchargement des bibliothèques d'export pendant la lecture de la tournée
+    (window.requestIdleCallback || setTimeout)(() => { loadPdf().catch(() => {}); loadExcel().catch(() => {}); });
   }
 
+  let kpiOuverts = !matchMedia("(max-width: 767px)").matches;
+  let derniereCle = null, movedKey = null, movedTimer = 0;
+
   async function initSortable() {
-    const list = root.querySelector(".stop-cards");
+    const list = root.querySelector(".timeline");
     if (!list) return;
     try {
       const Sortable = await loadSortable();
-      sortable = Sortable.create(list, { handle: ".handle, .sc-body", draggable: ".stop-card[data-k]",
-        animation: 150, ghostClass: "dragging", onEnd: () => applyOrder(currentOrder()) });
-    } catch { /* les boutons ↑ ↓ restent disponibles */ }
+      Sortable.create(list, { handle: ".handle, .body", draggable: "li[data-k]", animation: 220, easing: "cubic-bezier(.22,1,.36,1)",
+        ghostClass: "dragging", chosenClass: "drag-chosen", delay: 120, delayOnTouchOnly: true,
+        onEnd: (ev) => { movedKey = ev.item?.dataset.k ?? null; applyOrder([...list.querySelectorAll("li[data-k]")].map((li) => Number(li.dataset.k))); } });
+    } catch { /* les flèches restent disponibles */ }
   }
-
-  const currentOrder = () => [...root.querySelectorAll(".stop-cards .stop-card[data-k]")].map((li) => Number(li.dataset.k));
 
   async function applyOrder(order) {
     const n = S.result.stops_ordered.length;
     if (order.length !== n || [...order].sort((a, b) => a - b).some((v, i) => v !== i)) return render();
-    const optimal = order.every((v, i) => v === i);
-    if (busy) return;
-    busy = true;
-    root.querySelector(".busy").hidden = false;
-    try {
-      S.manual = optimal ? null : await recalcManuel(S.result, order);
-      emit("result");
-    } catch (e) { toast(e.message, "err"); render(); }
-    finally { busy = false; }
+    if (order.every((v, i) => v === i)) { S.manual = null; emit("result"); return; }
+    const seq = ++reorderSeq;
+    S.manual = recalcLocal(S.result, order);          // horaires immédiats
+    emit("result");
+    const full = await recalcManuel(S.result, order); // tracé et distance réels
+    if (seq !== reorderSeq) return;                   // un ordre plus récent a été demandé
+    S.manual = full;
+    emit("result");
+    const live = root.querySelector("[data-live]");
+    if (live) live.textContent = `Ordre modifié. Retour à ${fmtMin(full.return_min)}.`;
+  }
+
+  async function exporter(kind, btn) {
+    const r = activeResult();
+    const date = fmtDate(S.params.tourDate).replaceAll("/", "-");
+    const suffix = r.is_manual ? "_ordre-perso" : "";
+    await withBusy(btn, "Préparation…", async () => {
+      try {
+        if (kind === "pdf") {
+          const { exportTourneePdf } = await import("./pdf.js?v=202611161929");
+          telecharger(await exportTourneePdf(r, S.params.tourDate, S.params.driver), `Feuille_de_route_${date}${suffix}.pdf`, "application/pdf");
+          S.tournee.pdfAt = new Date().toISOString();
+          S.tournee.stockAt = null;
+          emit("tournee");
+          toast("Feuille de route téléchargée");
+        } else {
+          const { exportTourneeExcel } = await import("./xlsx.js?v=202611161929");
+          telecharger(await exportTourneeExcel(r, S.params.tourDate, S.params.driver), `Tournee_${date}${suffix}.xlsx`, XLSX_MIME);
+          toast("Fichier Excel téléchargé");
+        }
+      } catch (err) {
+        console.error(err);
+        toast(kind === "pdf" ? "La feuille de route n'a pas pu être créée. Essayez la version Excel." : "Le fichier Excel n'a pas pu être créé.", "err");
+      }
+    });
+  }
+
+  async function appliquerStock(btn) {
+    const bes = besoinsTournee(stopsEffectifs(), S.stockManutentions);
+    const sorties = bes.reduce((a, b) => a + b.sorties, 0), retours = bes.reduce((a, b) => a + b.retours, 0);
+    if (!sorties && !retours) return toast("Cette tournée ne modifie pas le stock.", "info");
+    if (!await confirmer("Tournée effectuée ?", `Le stock sera mis à jour : ${sorties} sortie${sorties > 1 ? "s" : ""}, ${retours} retour${retours > 1 ? "s" : ""}.`, "Mettre à jour", false)) return;
+    const avant = structuredClone(S.stock);
+    await withBusy(btn, "Mise à jour…", () => saveStock(projeterStock(S.stock, bes), null));
+    S.tournee.stockAt = new Date().toISOString();
+    emit("tournee");
+    confettis();
+    toast("Stock mis à jour", "ok", { action: { label: "Annuler", run: async () => { await saveStock(avant, "Stock rétabli"); S.tournee.stockAt = null; emit("tournee"); } } });
   }
 
   root.addEventListener("click", (e) => {
     const b = e.target.closest("[data-act], [data-move]");
     if (!b) return;
-    if (b.dataset.act === "reset") { S.manual = null; emit("result"); return; }
-    if (b.dataset.move) {
-      const order = currentOrder();
-      const k = Number(b.closest("[data-k]").dataset.k);
-      const i = order.indexOf(k), j = i + Number(b.dataset.move);
+    const act = b.dataset.act;
+    if (act === "reset") { S.manual = null; emit("result"); toast("Ordre optimisé rétabli"); }
+    else if (act === "pdf" || act === "xlsx") exporter(act, b);
+    else if (act === "stock") appliquerStock(b);
+    else if (act === "relancer") { ctx.goto("saisie"); setTimeout(() => ctx.optimiser?.(), 350); }
+    else if (b.dataset.move) {
+      const li = b.closest("li[data-k]");
+      const order = [...root.querySelectorAll(".timeline li[data-k]")].map((x) => Number(x.dataset.k));
+      const i = order.indexOf(Number(li.dataset.k)), j = i + Number(b.dataset.move);
       if (j < 0 || j >= order.length) return;
       [order[i], order[j]] = [order[j], order[i]];
-      applyOrder(order);
+      const k = li.dataset.k, dir = b.dataset.move;
+      movedKey = k;
+      applyOrder(order).then(() => root.querySelector(`.timeline li[data-k="${k}"] [data-move="${dir}"]`)?.focus());
     }
   });
+  root.addEventListener("mouseover", (e) => { const li = e.target.closest(".timeline li[data-pos]"); if (li) markers[Number(li.dataset.pos)]?.getElement()?.classList.add("pin-active"); });
+  root.addEventListener("mouseout", (e) => { const li = e.target.closest(".timeline li[data-pos]"); if (li) markers[Number(li.dataset.pos)]?.getElement()?.classList.remove("pin-active"); });
 
-  on("result", () => { if (!root.hidden) render(); else dirty = true; });
-  on("params", () => { if (!root.hidden) render(); else dirty = true; });
+  const maj = () => { if (!root.hidden) render(); else dirty = true; };
+  on("result", maj); on("params", maj); on("tournee", maj);
 
-  return { show() { if (dirty || !root.querySelector(".kpis, .placeholder")) { dirty = false; render(); } else map?.invalidateSize(); } };
+  return { show() { if (dirty || !root.innerHTML) { dirty = false; render(); } else map?.invalidateSize(); } };
 }
