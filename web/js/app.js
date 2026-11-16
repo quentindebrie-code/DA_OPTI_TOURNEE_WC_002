@@ -1,13 +1,13 @@
 // Point d'entrée : connexion, chargement des données (cache local puis réseau),
 // navigation avec transitions, pastille de contexte, assistance.
 
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611162119";
-import { SupabaseStore, DemoStore } from "./store.js?v=202611162119";
-import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611162119";
-import { icon } from "./icons.js?v=202611162119";
-import { logoHtml } from "./logo.js?v=202611162119";
-import { S, on, initState, resultatObsolete } from "./state.js?v=202611162119";
-import { ouvrirTicket } from "./ticket.js?v=202611162119";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "../config.js?v=202611162123";
+import { SupabaseStore, DemoStore } from "./store.js?v=202611162123";
+import { toast, initInteractions, moveInk, fmtDate, reduceMotion } from "./util.js?v=202611162123";
+import { icon } from "./icons.js?v=202611162123";
+import { logoHtml } from "./logo.js?v=202611162123";
+import { S, on, initState, resultatObsolete } from "./state.js?v=202611162123";
+import { ouvrirTicket } from "./ticket.js?v=202611162123";
 
 const $ = (s) => document.querySelector(s);
 // « ?demo » dans l'adresse force le mode démo (données fictives locales).
@@ -20,6 +20,44 @@ document.querySelectorAll(".brand, .logo-slot").forEach((el) => { el.innerHTML =
 document.querySelectorAll("[data-ic]").forEach((a) => { a.insertAdjacentHTML("afterbegin", icon(a.dataset.ic)); });
 $("#help-fab").innerHTML = icon("support");
 $("#logout").innerHTML = icon("logout");
+
+// ── Thème clair / sombre ─────────────────────────────────────────────────────
+const themeBtn = $("#theme-btn");
+function majThemeBtn() {
+  const dark = document.documentElement.classList.contains("dark");
+  themeBtn.innerHTML = icon(dark ? "sun" : "moon");
+  themeBtn.setAttribute("aria-label", dark ? "Passer en mode clair" : "Passer en mode sombre");
+  themeBtn.title = dark ? "Mode clair" : "Mode sombre";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#001A07" : "#0A6D25");
+}
+function appliquerTheme(dark, origine) {
+  const swap = () => { document.documentElement.classList.toggle("dark", dark); majThemeBtn(); };
+  if (reduceMotion()) return swap();
+  if (document.startViewTransition && origine) {
+    const r = origine.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const root = document.documentElement.style;
+    root.setProperty("--tx", `${x}px`); root.setProperty("--ty", `${y}px`);
+    root.setProperty("--tr", `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
+    const vt = document.startViewTransition(swap);
+    vt.ready.catch(() => {});
+    vt.finished.catch(() => {}).then(() => { if (document.documentElement.classList.contains("dark") !== dark) swap(); });
+  } else {
+    document.documentElement.classList.add("theme-fade");
+    swap();
+    setTimeout(() => document.documentElement.classList.remove("theme-fade"), 400);
+  }
+}
+themeBtn.addEventListener("click", () => {
+  const dark = !document.documentElement.classList.contains("dark");
+  try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch { /* choix non mémorisé */ }
+  appliquerTheme(dark, themeBtn);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+  let choix = null; try { choix = localStorage.getItem("theme"); } catch { /* */ }
+  if (!choix) appliquerTheme(e.matches);
+});
+majThemeBtn();
 initInteractions();
 
 // ── État partagé ─────────────────────────────────────────────────────────────
@@ -98,7 +136,7 @@ async function startApp(email) {
   try { cached = JSON.parse(localStorage.getItem(ctx.cacheKey()) || "null"); } catch { /* cache illisible */ }
   if (cached) ctx.clients = cached;
   const [mods] = await Promise.all([
-    Promise.all([import("./accueil.js?v=202611162119"), import("./saisie.js?v=202611162119"), import("./tournee.js?v=202611162119"), import("./clients.js?v=202611162119"), import("./stock.js?v=202611162119")]),
+    Promise.all([import("./accueil.js?v=202611162123"), import("./saisie.js?v=202611162123"), import("./tournee.js?v=202611162123"), import("./clients.js?v=202611162123"), import("./stock.js?v=202611162123")]),
     initState(ctx.store),
     cached ? null : ctx.refreshClients(),
   ]);

@@ -2,12 +2,12 @@
 // feuille de tournée (avec récap matériel et fiches d'état des lieux).
 // Mise en forme identique à la version Streamlit (openpyxl → ExcelJS).
 
-import { loadExcel } from "./libs.js?v=202611162119";
-import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursTexte, fmtDate } from "./util.js?v=202611162119";
+import { loadExcel } from "./libs.js?v=202611162123";
+import { COULEURS_PRODUITS, PRODUITS_CATALOGUE, normTxt, couleursTexte, fmtDate } from "./util.js?v=202611162123";
 import { ACTIONS_CATALOGUE, OPTIONS_CATALOGUE, STOPS_COLUMNS, ARTICLES_STOCK, PAUSE_DEJEUNER_MIN,
   ACTION_BG, PIECES_ETAT_LIEUX, ETAT_LIEUX_INTRO, ETAT_LIEUX_INTRO_GENERAL, cleanStock,
-  normalizeAction, normalizeProduit, normalizeOption, hhmmFromCell, fmtMin, fmtDuree, prestationParts } from "./metier.js?v=202611162119";
-import { pauseSlot } from "./optim.js?v=202611162119";
+  normalizeAction, normalizeProduit, normalizeOption, hhmmFromCell, fmtMin, fmtDuree, prestationParts } from "./metier.js?v=202611162123";
+import { pauseSlot } from "./optim.js?v=202611162123";
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const argb = (hex) => "FF" + hex.replace("#", "").toUpperCase();
